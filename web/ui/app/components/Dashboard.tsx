@@ -77,14 +77,15 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                         console.error("Spotify API Error:", res.status, await res.text())
                         break
                     }
-                    const data = await res.json()
-                    console.log("Got playlists batch:", data.items?.length)
                     if (data.items && Array.isArray(data.items)) {
-                        all = [...all, ...data.items]
+                        console.log(`Page ${Math.ceil(all.length / 50) + 1}: Got ${data.items.length} playlists. Total available on server: ${data.total}`)
+                        // Spotify API documentation says items can contain nulls in some edge cases
+                        const validItems = data.items.filter((item: any) => item !== null)
+                        all = [...all, ...validItems]
                     }
                     url = data.next
                 }
-                console.log("Total playlists fetched:", all.length)
+                console.log("Total playlists accumulated:", all.length)
                 setPlaylists(all)
             } catch (e) {
                 console.error("Fetch Loop Error:", e)

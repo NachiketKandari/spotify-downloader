@@ -12,10 +12,11 @@ export default function Home() {
                 <div className="max-w-7xl mx-auto">
                     <div className="flex justify-between items-center mb-12">
                         <h1 className="text-3xl font-bold flex items-center gap-3">
-                            <Music className="text-green-500" /> Offline<span className="text-green-500">ify</span>
+                            <Music className="text-green-500" />
+                            <span>Offline<span className="text-green-500">ify</span></span>
                         </h1>
                         <div className="flex items-center gap-4">
-                            <div className="text-neutral-400">Logged in as {session.user?.name}</div>
+                            <div className="text-neutral-400">Logged in as {session.user?.name || session.user?.email || 'User'}</div>
                             <button
                                 onClick={() => signOut()}
                                 className="px-4 py-2 bg-neutral-800 rounded-full hover:bg-neutral-700 transition"
