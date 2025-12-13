@@ -236,8 +236,48 @@ def download_zip(user_id: str):
 
 @app.get("/api/choose-directory")
 def choose_directory():
-    # Deprecated for Cloud/Multi-user
-    return {"path": "downloads"} 
+    """Opens a native OS folder picker. Returns {"path": ...} or error."""
+    try:
+        # Strategy 1: MacOS Native (AppleScript) - Better UX on Mac
+        import subprocess
+        import sys
+        if sys.platform == 'darwin':
+            try:
+                script = 'tell application "System Events" to activate\nset p to POSIX path of (choose folder with prompt "Select Download Folder")\nreturn p'
+                path = subprocess.check_output(['osascript', '-e', script], stderr=subprocess.STDOUT).decode('utf-8').strip()
+                if path:
+                    return {"path": path}
+            except subprocess.CalledProcessError:
+                return {"path": "downloads"} # Cancelled -> Default
+            except Exception as e:
+                print(f"Mac Picker failed: {e}")
+
+        # Strategy 2: Tkinter (Universal Fallback)
+        import tkinter as tk
+        from tkinter import filedialog
+        
+        # Check if we have a display (prevent crash on headless servers)
+        if not os.environ.get('DISPLAY') and sys.platform != 'darwin' and os.name != 'nt':
+             return {"path": "downloads"} # Headless env -> Default
+
+        root = tk.Tk()
+        root.withdraw() 
+        root.attributes('-topmost', True) 
+        
+        # Force focus
+        root.lift()
+        root.focus_force()
+        
+        path = filedialog.askdirectory(title="Select Download Folder")
+        root.destroy()
+        
+        if path:
+             return {"path": path}
+        return {"path": "downloads"} # Cancelled -> Default
+            
+    except Exception as e:
+        print(f"Directory picker error: {e}")
+        return {"path": "downloads"} # Fallback safe mode
 
 if __name__ == "__main__":
     import uvicorn

@@ -253,11 +253,35 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                     <div className="h-10 w-px bg-neutral-700"></div>
                     <div>
                         <div className="text-neutral-400 text-sm font-medium">Download Location</div>
-                        <div className="flex items-center gap-2 mt-1">
-                            <div className="bg-neutral-900 text-neutral-500 rounded px-3 py-1.5 border border-neutral-800 text-sm flex items-center gap-2 cursor-not-allowed">
-                                <FolderSearch size={14} /> Cloud Storage
+                        {typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname) ? (
+                            <div className="flex items-center gap-3 mt-1">
+                                <button
+                                    onClick={async () => {
+                                        setPickingFolder(true)
+                                        try {
+                                            const res = await fetch(`${API_BASE}/api/choose-directory`)
+                                            const data = await res.json()
+                                            if (data.path) setDownloadPath(data.path)
+                                        } catch (e) {
+                                            console.error(e)
+                                        } finally {
+                                            setPickingFolder(false)
+                                        }
+                                    }}
+                                    disabled={pickingFolder}
+                                    className="bg-neutral-900 hover:bg-neutral-800 text-neutral-300 rounded px-3 py-1.5 border border-neutral-700 text-sm flex items-center gap-2 transition"
+                                >
+                                    <FolderSearch size={14} />
+                                    {pickingFolder ? 'Open Picker...' : (downloadPath === 'downloads' ? 'Default (downloads)' : '.../' + downloadPath.split('/').pop())}
+                                </button>
                             </div>
-                        </div>
+                        ) : (
+                            <div className="flex items-center gap-2 mt-1">
+                                <div className="bg-neutral-900 text-neutral-500 rounded px-3 py-1.5 border border-neutral-800 text-sm flex items-center gap-2 cursor-not-allowed">
+                                    <FolderSearch size={14} /> Cloud Storage
+                                </div>
+                            </div>
+                        )}
                     </div>
                     <div className="h-10 w-px bg-neutral-700"></div>
                     <div>
@@ -343,7 +367,13 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                 <div className="flex justify-center p-20"><Loader2 className="animate-spin text-green-500" size={48} /></div>
             ) : (
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-                    {playlists.map(playlist => {
+                    {playlists.length === 0 ? (
+                        <div className="col-span-full py-20 text-center text-neutral-500">
+                            <Music size={48} className="mx-auto mb-4 opacity-50" />
+                            <p className="text-lg">No playlists found.</p>
+                            <p className="text-sm">Create one in Spotify and refresh!</p>
+                        </div>
+                    ) : playlists.map(playlist => {
                         const isSelected = selectionModel.has(playlist.id)
                         const selState = selectionModel.get(playlist.id)
                         return (
