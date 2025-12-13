@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+.env.local
+node_modules/
+.next/
+downloads/
+downloaded_songs.json
+.DS_Store
+*.mp3
+*.m3u8
