@@ -46,18 +46,46 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
         const fetchPlaylists = async () => {
             try {
                 let all: Playlist[] = []
+
+                // 1. Fetch Liked Songs (Saved Tracks)
+                try {
+                    const likedRes = await fetch('https://api.spotify.com/v1/me/tracks?limit=1', {
+                        headers: { Authorization: `Bearer ${accessToken}` }
+                    })
+                    if (likedRes.ok) {
+                        const likedData = await likedRes.json()
+                        all.push({
+                            id: 'liked-songs',
+                            name: 'Liked Songs',
+                            images: [{ url: 'https://misc.scdn.co/liked-songs/liked-songs-300.png' }], // Standard Spotify Liked Songs Image
+                            tracks: { total: likedData.total, href: 'https://api.spotify.com/v1/me/tracks' },
+                            owner: { display_name: 'You' }
+                        })
+                    }
+                } catch (e) {
+                    console.error("Error fetching Liked Songs:", e)
+                }
+
+                // 2. Fetch User Playlists
                 let url = 'https://api.spotify.com/v1/me/playlists?limit=50'
                 while (url) {
+                    console.log("Fetching playlists from:", url)
                     const res = await fetch(url, {
                         headers: { Authorization: `Bearer ${accessToken}` }
                     })
+                    if (!res.ok) {
+                        console.error("Spotify API Error:", res.status, await res.text())
+                        break
+                    }
                     const data = await res.json()
+                    console.log("Got playlists batch:", data.items.length)
                     all = [...all, ...data.items]
                     url = data.next
                 }
+                console.log("Total playlists fetched:", all.length)
                 setPlaylists(all)
             } catch (e) {
-                console.error(e)
+                console.error("Fetch Loop Error:", e)
             } finally {
                 setLoading(false)
             }
@@ -124,7 +152,16 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                 // Fetch tracks
                 const tracks: Track[] = []
                 const uniqueUris = new Set<string>()
-                let url = `https://api.spotify.com/v1/playlists/${playlist.id}/tracks?fields=items(track(name,uri,artists,track_number,explicit,album(name,images,release_date,total_tracks))),next&limit=100`
+                let url = ''
+
+                if (playlist.id === 'liked-songs') {
+                    // Liked Songs Endpoint
+                    // Note: 'fields' param is NOT supported on me/tracks in the same way. We must fetch full objects.
+                    url = `https://api.spotify.com/v1/me/tracks?limit=50`
+                } else {
+                    // Standard Playlist Endpoint
+                    url = `https://api.spotify.com/v1/playlists/${playlist.id}/tracks?fields=items(track(name,uri,artists,track_number,explicit,album(name,images,release_date,total_tracks))),next&limit=100`
+                }
 
                 while (url) {
                     const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
@@ -191,7 +228,13 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
 
                 const fetchedTracks: Track[] = []
                 const uniqueUris = new Set<string>()
-                let url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?fields=items(track(name,uri,artists,album(name,images))),next&limit=100`
+                let url = ''
+                if (playlistId === 'liked-songs') {
+                    url = `https://api.spotify.com/v1/me/tracks?limit=50`
+                } else {
+                    url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?fields=items(track(name,uri,artists,track_number,explicit,album(name,images,release_date,total_tracks))),next&limit=100`
+                }
+
                 while (url) {
                     const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
                     const data = await res.json()
@@ -203,14 +246,17 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                                 name: item.track.name,
                                 artist: item.track.artists.map((a: any) => a.name).join(';'),
                                 album: item.track.album.name,
-                                cover_url: item.track.album.images?.[0]?.url
+                                cover_url: item.track.album.images?.[0]?.url,
+                                release_date: item.track.album.release_date,
+                                track_number: item.track.track_number,
+                                total_tracks: item.track.album.total_tracks,
+                                explicit: item.track.explicit
                             })
                         }
                     }
                     url = data.next
                 }
 
-                // Update Cache? No, state update in loop is risky. Just use local var.
                 if (selection.mode === 'ALL') {
                     tracksToDownload = fetchedTracks
                 }
