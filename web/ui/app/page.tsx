@@ -25,7 +25,10 @@ export default function Home() {
                         </div>
                     </div>
 
-                    <Dashboard accessToken={session.accessToken as string} />
+                    <Dashboard
+                        accessToken={session.accessToken as string}
+                        userEmail={session.user?.email || 'unknown'}
+                    />
                 </div>
             </main>
         )

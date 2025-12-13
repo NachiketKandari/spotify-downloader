@@ -7,6 +7,7 @@ import clsx from 'clsx'
 
 interface DashboardProps {
     accessToken: string
+    userEmail: string
 }
 
 interface Playlist {
@@ -25,7 +26,7 @@ interface Track {
     cover_url?: string
 }
 
-export default function Dashboard({ accessToken }: DashboardProps) {
+export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
     const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
     const [playlists, setPlaylists] = useState<Playlist[]>([])
     const [loading, setLoading] = useState(true)
@@ -66,7 +67,7 @@ export default function Dashboard({ accessToken }: DashboardProps) {
         if (downloading) {
             interval = setInterval(async () => {
                 try {
-                    const res = await fetch(`${API_BASE}/api/status`)
+                    const res = await fetch(`${API_BASE}/api/status?user_id=${encodeURIComponent(userEmail)}`)
                     const data = await res.json()
                     setStatus(data)
                     if (data.status === 'done' || data.status === 'idle') {
@@ -220,7 +221,10 @@ export default function Dashboard({ accessToken }: DashboardProps) {
         try {
             await fetch(`${API_BASE}/api/download`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-user-id': userEmail
+                },
                 body: JSON.stringify({ playlists: batches, quality, output_path: downloadPath })
             })
         } catch (e) {
@@ -311,7 +315,7 @@ export default function Dashboard({ accessToken }: DashboardProps) {
                                     <div key={i} className="flex justify-between items-center bg-neutral-900 p-2 rounded border border-neutral-800">
                                         <span className="text-neutral-300 truncate text-xs mr-2">{file.name}</span>
                                         <a
-                                            href={`${API_BASE}/api/file?path=${encodeURIComponent(file.path)}`}
+                                            href={`${API_BASE}/api/file?path=${encodeURIComponent(file.path)}&user_id=${encodeURIComponent(userEmail)}`}
                                             target="_blank"
                                             className="bg-green-600 hover:bg-green-500 text-white text-xs px-3 py-1 rounded flex items-center gap-1 transition"
                                             download
@@ -540,7 +544,7 @@ export default function Dashboard({ accessToken }: DashboardProps) {
                         <div className="flex flex-col gap-3 w-full">
                             <button
                                 onClick={() => {
-                                    window.open(`${API_BASE}/api/zip`, '_blank')
+                                    window.open(`${API_BASE}/api/zip?user_id=${encodeURIComponent(userEmail)}`, '_blank')
                                 }}
                                 className="bg-neutral-800 text-white font-bold py-3 px-8 rounded-full hover:bg-neutral-700 transition w-full text-lg border border-neutral-700 flex items-center justify-center gap-2"
                             >
