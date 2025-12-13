@@ -78,8 +78,10 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                         break
                     }
                     const data = await res.json()
-                    console.log("Got playlists batch:", data.items.length)
-                    all = [...all, ...data.items]
+                    console.log("Got playlists batch:", data.items?.length)
+                    if (data.items && Array.isArray(data.items)) {
+                        all = [...all, ...data.items]
+                    }
                     url = data.next
                 }
                 console.log("Total playlists fetched:", all.length)
@@ -501,7 +503,7 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                             </div>
                             <div>
                                 <h2 className="text-3xl font-bold text-white mb-2">{viewingPlaylist.name}</h2>
-                                <p className="text-neutral-400">By {viewingPlaylist.owner.display_name} • {viewingPlaylist.tracks.total} tracks</p>
+                                <p className="text-neutral-400">By {viewingPlaylist.owner?.display_name || 'Spotify'} • {viewingPlaylist.tracks.total} tracks</p>
                             </div>
                             <div className="ml-auto flex gap-3">
                                 <button
