@@ -12,7 +12,7 @@ export default function Home() {
                 <div className="max-w-7xl mx-auto">
                     <div className="flex justify-between items-center mb-12">
                         <h1 className="text-3xl font-bold flex items-center gap-3">
-                            <Music className="text-green-500" /> Offlineify
+                            <Music className="text-green-500" /> Offline<span className="text-green-500">ify</span>
                         </h1>
                         <div className="flex items-center gap-4">
                             <div className="text-neutral-400">Logged in as {session.user?.name}</div>
@@ -37,7 +37,7 @@ export default function Home() {
                 <div className="flex justify-center mb-8">
                     <Music size={64} className="text-green-500" />
                 </div>
-                <h1 className="text-5xl font-bold tracking-tight">Offlineify</h1>
+                <h1 className="text-5xl font-bold tracking-tight">Offline<span className="text-green-500">ify</span></h1>
                 <p className="text-neutral-400 text-lg">
                     Export your playlists from Spotify directly to your local storage in high-quality MP3 (320kbps).
                 </p>

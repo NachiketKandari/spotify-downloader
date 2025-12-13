@@ -31,7 +31,7 @@ export default function Dashboard({ accessToken }: DashboardProps) {
     const [downloading, setDownloading] = useState(false)
     const [status, setStatus] = useState<any>(null)
     const [quality, setQuality] = useState('320')
-    const [downloadPath, setDownloadPath] = useState('') // Default empty to force selection
+    const [downloadPath, setDownloadPath] = useState('downloads') // Default 'downloads' for Cloud Mode
     const [pickingFolder, setPickingFolder] = useState(false)
     const [showSuccess, setShowSuccess] = useState(false)
 
