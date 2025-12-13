@@ -26,6 +26,7 @@ interface Track {
 }
 
 export default function Dashboard({ accessToken }: DashboardProps) {
+    const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
     const [playlists, setPlaylists] = useState<Playlist[]>([])
     const [loading, setLoading] = useState(true)
     const [downloading, setDownloading] = useState(false)
@@ -65,7 +66,7 @@ export default function Dashboard({ accessToken }: DashboardProps) {
         if (downloading) {
             interval = setInterval(async () => {
                 try {
-                    const res = await fetch('http://localhost:8000/api/status')
+                    const res = await fetch(`${API_BASE}/api/status`)
                     const data = await res.json()
                     setStatus(data)
                     if (data.status === 'done' || data.status === 'idle') {
@@ -217,7 +218,7 @@ export default function Dashboard({ accessToken }: DashboardProps) {
 
         // 2. Send to Backend
         try {
-            await fetch('http://localhost:8000/api/download', {
+            await fetch(`${API_BASE}/api/download`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ playlists: batches, quality, output_path: downloadPath })
@@ -241,33 +242,9 @@ export default function Dashboard({ accessToken }: DashboardProps) {
                     <div>
                         <div className="text-neutral-400 text-sm font-medium">Download Location</div>
                         <div className="flex items-center gap-2 mt-1">
-                            <input
-                                type="text"
-                                value={downloadPath}
-                                onChange={(e) => setDownloadPath(e.target.value)}
-                                className="bg-neutral-900 text-white rounded-l px-2 py-1 border border-neutral-700 focus:border-green-500 outline-none w-48 text-sm"
-                                placeholder="/path/to/folder"
-                            />
-                            <button
-                                onClick={async () => {
-                                    if (pickingFolder) return
-                                    setPickingFolder(true)
-                                    try {
-                                        const res = await fetch('http://localhost:8000/api/choose-directory')
-                                        const data = await res.json()
-                                        if (data.path) setDownloadPath(data.path)
-                                    } catch (e) { console.error(e) }
-                                    finally { setPickingFolder(false) }
-                                }}
-                                disabled={pickingFolder}
-                                className={clsx(
-                                    "px-3 py-1 rounded-r border border-l-0 border-neutral-700 flex items-center transition",
-                                    pickingFolder ? "bg-neutral-800 text-neutral-500 cursor-wait" : "bg-neutral-700 hover:bg-neutral-600 text-white"
-                                )}
-                                title="Browse Folder"
-                            >
-                                {pickingFolder ? <Loader2 size={16} className="animate-spin" /> : <FolderSearch size={16} />}
-                            </button>
+                            <div className="bg-neutral-900 text-neutral-500 rounded px-3 py-1.5 border border-neutral-800 text-sm flex items-center gap-2 cursor-not-allowed">
+                                <FolderSearch size={14} /> Cloud Storage
+                            </div>
                         </div>
                     </div>
                     <div className="h-10 w-px bg-neutral-700"></div>
@@ -324,6 +301,28 @@ export default function Dashboard({ accessToken }: DashboardProps) {
                             <div className="text-green-500 animate-pulse">&gt; Processing: {status.current_track}</div>
                         )}
                     </div>
+
+                    {/* Individual Downloads */}
+                    {status.completed_files && status.completed_files.length > 0 && (
+                        <div className="mt-6 border-t border-neutral-800 pt-4">
+                            <h4 className="text-white font-bold mb-3 flex items-center gap-2"><CheckCircle size={16} className="text-green-500" /> Ready to Download</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                {status.completed_files.map((file: any, i: number) => (
+                                    <div key={i} className="flex justify-between items-center bg-neutral-900 p-2 rounded border border-neutral-800">
+                                        <span className="text-neutral-300 truncate text-xs mr-2">{file.name}</span>
+                                        <a
+                                            href={`${API_BASE}/api/file?path=${encodeURIComponent(file.path)}`}
+                                            target="_blank"
+                                            className="bg-green-600 hover:bg-green-500 text-white text-xs px-3 py-1 rounded flex items-center gap-1 transition"
+                                            download
+                                        >
+                                            <Download size={12} /> Save
+                                        </a>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -541,7 +540,7 @@ export default function Dashboard({ accessToken }: DashboardProps) {
                         <div className="flex flex-col gap-3 w-full">
                             <button
                                 onClick={() => {
-                                    window.open('http://localhost:8000/api/zip', '_blank')
+                                    window.open(`${API_BASE}/api/zip`, '_blank')
                                 }}
                                 className="bg-neutral-800 text-white font-bold py-3 px-8 rounded-full hover:bg-neutral-700 transition w-full text-lg border border-neutral-700 flex items-center justify-center gap-2"
                             >

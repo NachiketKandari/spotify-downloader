@@ -37,14 +37,15 @@ class DownloadRequest(BaseModel):
     output_path: str = "downloads" # Default path
 
 # Global State (Simple in-memory for this single-user local app)
-class JobStatus:
+class JobState(BaseModel):
+    status: str = "idle"
     total: int = 0
     completed: int = 0
     current_track: str = ""
-    status: str = "idle" # idle, working, done
     logs: List[str] = []
+    completed_files: List[dict] = [] # {name: str, path: str}
 
-job_state = JobStatus()
+job_state = JobState()
 
 def run_download_job(playlists: List[PlaylistBatch], quality: str, base_output_path: str):
     job_state.status = "working"
@@ -54,24 +55,31 @@ def run_download_job(playlists: List[PlaylistBatch], quality: str, base_output_p
     job_state.total = total_tracks
     job_state.completed = 0
     job_state.logs = []
+    job_state.completed_files = [] # Reset
     
-    # Validate Base Path
+    # yt-dlp options
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': quality,
+        }],
+        'outtmpl': f'{base_output_path}/%(artist)s - %(title)s.%(ext)s', # Placeholder, overwritten below
+        'quiet': True,
+        'no_warnings': True,
+        'noprogress': True,
+    }
+
     if not os.path.exists(base_output_path):
-        try:
-            os.makedirs(base_output_path)
-        except Exception as e:
-            msg = f"Error creating base directory: {e}"
-            print(msg)
-            job_state.logs.append(msg)
-            job_state.status = "done"
-            return
+        os.makedirs(base_output_path)
 
     print(f"Starting download job for {len(playlists)} playlists, {total_tracks} total tracks")
 
     for playlist in playlists:
         # Sanitize playlist name for folder
-        safe_name = "".join([c for c in playlist.name if c.isalpha() or c.isdigit() or c==' ']).rstrip()
-        playlist_dir = os.path.join(base_output_path, safe_name)
+        safe_playlist_name = "".join([c for c in playlist.name if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+        playlist_dir = os.path.join(base_output_path, safe_playlist_name)
         
         job_state.logs.append(f"Processing Playlist: {playlist.name} -> {playlist_dir}")
         
@@ -79,19 +87,9 @@ def run_download_job(playlists: List[PlaylistBatch], quality: str, base_output_p
         if not os.path.exists(playlist_dir):
             os.makedirs(playlist_dir)
 
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': quality,
-            }],
-            # 'outtmpl' will be set inside downloader based on output_dir
-            'output_dir': playlist_dir, 
-            'quiet': True,
-            'no_warnings': True,
-            'ignoreerrors': True,
-        }
+        # Update output template for this playlist
+        ydl_opts['outtmpl'] = f'{playlist_dir}/%(artist)s - %(title)s.%(ext)s'
+        ydl_opts['output_dir'] = playlist_dir # Custom param for our process_track
         
         # Create M3U8 Playlist File
         m3u_content = ["#EXTM3U"]
@@ -107,12 +105,26 @@ def run_download_job(playlists: List[PlaylistBatch], quality: str, base_output_p
                 # Add to M3U
                 m3u_content.append(f"#EXTINF:-1,{track.artist} - {track.name}")
                 m3u_content.append(result.get('filename', ''))
+                
+                # Add to completed_files for individual download
+                rel_path = os.path.join(safe_playlist_name, os.path.basename(result.get('filename', '')))
+                job_state.completed_files.append({
+                    "name": track.name,
+                    "path": rel_path
+                })
+
             elif result['status'] == 'skipped':
                 msg = f"Skipped: {track.name}"
                 # Add to M3U (Now we have filename)
                 if 'filename' in result:
                     m3u_content.append(f"#EXTINF:-1,{track.artist} - {track.name}")
                     m3u_content.append(result['filename'])
+                    
+                    rel_path = os.path.join(safe_playlist_name, os.path.basename(result.get('filename', '')))
+                    job_state.completed_files.append({
+                        "name": track.name,
+                        "path": rel_path
+                    })
                 
             else:
                 msg = f"Error {track.name}: {result.get('message')}"
@@ -141,6 +153,18 @@ def run_download_job(playlists: List[PlaylistBatch], quality: str, base_output_p
 @app.get("/")
 def read_root():
     return {"message": "Spotify Downloader API is running"}
+
+@app.get("/api/file")
+def get_file(path: str):
+    """Serve a specific file from the downloads directory"""
+    # Security: Ensure path doesn't escape downloads/
+    safe_path = os.path.normpath(os.path.join("downloads", path))
+    if not safe_path.startswith("downloads"):
+         raise HTTPException(status_code=403, detail="Invalid file path")
+    
+    if os.path.exists(safe_path):
+        return FileResponse(safe_path, filename=os.path.basename(path))
+    return {"error": "File not found"}
 
 @app.post("/api/download")
 async def start_download(request: DownloadRequest, background_tasks: BackgroundTasks):
