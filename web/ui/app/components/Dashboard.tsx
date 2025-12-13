@@ -24,6 +24,10 @@ interface Track {
     artist: string
     album: string
     cover_url?: string
+    release_date?: string
+    track_number?: number
+    total_tracks?: number
+    explicit?: boolean
 }
 
 export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
@@ -120,7 +124,7 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                 // Fetch tracks
                 const tracks: Track[] = []
                 const uniqueUris = new Set<string>()
-                let url = `https://api.spotify.com/v1/playlists/${playlist.id}/tracks?fields=items(track(name,uri,artists,album(name,images))),next&limit=100`
+                let url = `https://api.spotify.com/v1/playlists/${playlist.id}/tracks?fields=items(track(name,uri,artists,track_number,explicit,album(name,images,release_date,total_tracks))),next&limit=100`
 
                 while (url) {
                     const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
@@ -133,7 +137,11 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                                 name: item.track.name,
                                 artist: item.track.artists.map((a: any) => a.name).join(';'),
                                 album: item.track.album.name,
-                                cover_url: item.track.album.images?.[0]?.url
+                                cover_url: item.track.album.images?.[0]?.url,
+                                release_date: item.track.album.release_date,
+                                track_number: item.track.track_number,
+                                total_tracks: item.track.album.total_tracks,
+                                explicit: item.track.explicit
                             })
                         }
                     }

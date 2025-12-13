@@ -6,7 +6,7 @@ import requests
 from PIL import Image
 import io
 from mutagen.mp3 import MP3
-from mutagen.id3 import ID3, APIC, error
+from mutagen.id3 import ID3, APIC, TALB, TPE1, TIT2, TDRC, TRCK, TXXX, error
 
 DOWNLOAD_INDEX_FILE = 'downloaded_songs.json'
 DOWNLOAD_DIR = 'downloads'
@@ -179,6 +179,30 @@ def process_track(track, ydl_opts=None):
                             data=processed_data
                         )
                     )
+                    
+                    # Add Standard Metadata
+                    audio.tags.add(TIT2(encoding=3, text=track_name))
+                    audio.tags.add(TPE1(encoding=3, text=artist_name))
+                    
+                    if track.get('album'):
+                        audio.tags.add(TALB(encoding=3, text=track['album']))
+                        
+                    if track.get('release_date'):
+                         audio.tags.add(TDRC(encoding=3, text=track['release_date']))
+                         
+                    if track.get('track_number'):
+                        # TRCK format: "current/total" or just "current"
+                        trck_val = str(track['track_number'])
+                        if track.get('total_tracks'):
+                            trck_val += f"/{track['total_tracks']}"
+                        audio.tags.add(TRCK(encoding=3, text=trck_val))
+                        
+                    # Explicit Tag (iTunes proprietary but standard)
+                    # 1 = Explicit, 0 = Clean, 2 = Clean version of explicit
+                    if track.get('explicit') is not None:
+                        flag = '1' if track['explicit'] else '0'
+                        audio.tags.add(TXXX(encoding=3, desc='ITUNESADVISORY', text=flag))
+
                     audio.save()
                 except Exception as e:
                     print(f"Cover art error: {e}")

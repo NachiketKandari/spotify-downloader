@@ -27,6 +27,10 @@ class Track(BaseModel):
     artist: str
     album: str
     cover_url: Optional[str] = None
+    release_date: Optional[str] = None
+    track_number: Optional[int] = None
+    total_tracks: Optional[int] = None
+    explicit: Optional[bool] = False
 
 class PlaylistBatch(BaseModel):
     name: str
