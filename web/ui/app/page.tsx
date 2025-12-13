@@ -12,7 +12,7 @@ export default function Home() {
                 <div className="max-w-7xl mx-auto">
                     <div className="flex justify-between items-center mb-12">
                         <h1 className="text-3xl font-bold flex items-center gap-3">
-                            <Music className="text-green-500" /> Spotify Downloader Pro
+                            <Music className="text-green-500" /> Offlineify
                         </h1>
                         <div className="flex items-center gap-4">
                             <div className="text-neutral-400">Logged in as {session.user?.name}</div>
@@ -37,10 +37,9 @@ export default function Home() {
                 <div className="flex justify-center mb-8">
                     <Music size={64} className="text-green-500" />
                 </div>
-                <h1 className="text-5xl font-bold tracking-tight">Spotify <span className="text-green-500">Local</span></h1>
+                <h1 className="text-5xl font-bold tracking-tight">Offlineify</h1>
                 <p className="text-neutral-400 text-lg">
-                    Export your playlists directly to your local machine in high-quality MP3 (320kbps).
-                    Powered by a local Python engine.
+                    Export your playlists from Spotify directly to your local storage in high-quality MP3 (320kbps).
                 </p>
 
                 <button

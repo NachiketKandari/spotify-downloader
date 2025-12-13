@@ -1,4 +1,4 @@
-# Spotify Local Downloader
+# Offlineify
 
 A minimal, powerful web application to download high-quality Spotify playlists to your local machine.
 
