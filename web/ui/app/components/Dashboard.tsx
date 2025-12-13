@@ -77,6 +77,7 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                         console.error("Spotify API Error:", res.status, await res.text())
                         break
                     }
+                    const data = await res.json()
                     if (data.items && Array.isArray(data.items)) {
                         console.log(`Page ${Math.ceil(all.length / 50) + 1}: Got ${data.items.length} playlists. Total available on server: ${data.total}`)
                         // Spotify API documentation says items can contain nulls in some edge cases
