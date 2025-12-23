@@ -291,6 +291,14 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
         }
     }
 
+    const handleCancel = async () => {
+        try {
+            await fetch(`${API_BASE}/api/cancel?user_id=${encodeURIComponent(userEmail)}`, { method: 'POST' })
+        } catch (e) {
+            console.error('Cancel error:', e)
+        }
+    }
+
     return (
         <div>
             {/* Control Bar */}
@@ -388,6 +396,17 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                         )}
                     </div>
 
+                    {/* Stop Button */}
+                    {status.status !== 'cancelled' && status.status !== 'done' && (
+                        <div className="mt-4">
+                            <button
+                                onClick={handleCancel}
+                                className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded font-bold transition"
+                            >
+                                Stop Download
+                            </button>
+                        </div>
+                    )}
                     {/* Individual Downloads */}
                     {status.completed_files && status.completed_files.length > 0 && (
                         <div className="mt-6 border-t border-neutral-800 pt-4">

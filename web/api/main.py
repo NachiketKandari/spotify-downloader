@@ -1,4 +1,4 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Query
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -7,6 +7,8 @@ import os
 import shutil
 import uuid
 import yt_dlp
+import random
+import time
 from .downloader import process_track
 
 app = FastAPI()
@@ -48,6 +50,7 @@ class JobState(BaseModel):
     current_track: str = ""
     logs: List[str] = []
     completed_files: List[dict] = [] # {name: str, path: str}
+    cancel_requested: bool = False
 
 # Global State: Map user_id (email) -> JobState
 job_states: Dict[str, JobState] = {}
@@ -57,7 +60,7 @@ def get_job_state(user_id: str) -> JobState:
         job_states[user_id] = JobState()
     return job_states[user_id]
 
-def run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str):
+def run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str, output_path: str = "downloads"):
     state = get_job_state(user_id)
     state.status = "working"
     
@@ -69,9 +72,19 @@ def run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str)
     state.completed_files = [] # Reset
     
     # Base Output Path: downloads/{user_id}
-    # Sanitize user_id to be safe for filesystem
+    # Determine base output path
     safe_user_id = "".join([c for c in user_id if c.isalnum() or c in ['@', '.', '-', '_']])
-    base_output_path = os.path.join("downloads", safe_user_id)
+    
+    # Logic: 
+    # 1. If explicit output_path provided (and not default "downloads"), use it.
+    # 2. If user_id is "unknown" (local dev default), use "downloads" root.
+    # 3. Otherwise, use downloads/{user_id} for multi-user isolation.
+    if output_path and output_path != "downloads":
+        base_output_path = output_path
+    elif safe_user_id.lower() == "unknown":
+        base_output_path = "downloads"
+    else:
+        base_output_path = os.path.join("downloads", safe_user_id)
 
     # yt-dlp options
     ydl_opts = {
@@ -85,6 +98,7 @@ def run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str)
         'quiet': True,
         'no_warnings': True,
         'noprogress': True,
+        'cookiesfrombrowser': ('chrome',), # Use Chrome cookies to bypass bot detection
     }
 
     if not os.path.exists(base_output_path):
@@ -109,6 +123,16 @@ def run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str)
         m3u_content = ["#EXTM3U"]
         
         for track in playlist.tracks:
+            # Check for cancellation
+            if state.cancel_requested:
+                state.status = "cancelled"
+                state.logs.append("Download cancelled by user")
+                print(f"Job cancelled by user {user_id}")
+                return
+            
+            # Rate Limiting: Sleep 3-8 seconds to protect IP reputation
+            time.sleep(random.uniform(3, 8))
+            
             state.current_track = f"[{playlist.name}] {track.name}"
             
             # Call the core logic
@@ -207,7 +231,7 @@ async def start_download(request: DownloadRequest, background_tasks: BackgroundT
         return {"message": "Job already in progress", "status": "working"}
     
     # Start background task with USER CONTEXT
-    background_tasks.add_task(run_download_job, x_user_id, request.playlists, request.quality)
+    background_tasks.add_task(run_download_job, x_user_id, request.playlists, request.quality, request.output_path)
     return {"message": "Download started", "status": "starting"}
 
 @app.get("/api/status")
@@ -278,6 +302,58 @@ def choose_directory():
     except Exception as e:
         print(f"Directory picker error: {e}")
         return {"path": "downloads"} # Fallback safe mode
+
+@app.post("/api/cancel")
+def cancel_download(user_id: str):
+    """Cancel an in-progress download job"""
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User ID required")
+    
+    state = get_job_state(user_id)
+    if state.status != "working":
+        return {"message": "No active download to cancel", "status": state.status}
+    
+    state.cancel_requested = True
+    return {"message": "Cancellation requested", "status": "cancelling"}
+
+@app.post("/api/csv-download")
+async def csv_download(file: UploadFile, background_tasks: BackgroundTasks, quality: str = "320", user_id: str = "csv_user"):
+    """Upload a Spotify CSV export and download the tracks"""
+    try:
+        # Read CSV file
+        import io
+        contents = await file.read()
+        df = pd.read_csv(io.BytesIO(contents))
+        
+        # Parse tracks from CSV
+        tracks = []
+        for _, row in df.iterrows():
+            track = Track(
+                uri=row.get('Track URI', ''),
+                name=row.get('Track Name', ''),
+                artist=row.get('Artist Name(s)', ''),
+                album=row.get('Album Name', ''),
+                cover_url=row.get('Album Image URL', None),
+                release_date=row.get('Album Release Date', None),
+                track_number=int(row.get('Track Number', 0)) if pd.notna(row.get('Track Number')) else None,
+                total_tracks=int(row.get('Album Artist Name(s)', 0)) if pd.notna(row.get('Album Artist Name(s)')) else None,
+                explicit=bool(row.get('Explicit', 'false').lower() == 'true')
+            )
+            tracks.append(track)
+        
+        # Create a single playlist batch
+        playlist_batch = PlaylistBatch(name="CSV Upload", tracks=tracks)
+        
+        # Start download job
+        state = get_job_state(user_id)
+        if state.status == "working":
+            return {"message": "Job already in progress", "status": "working"}
+        
+        background_tasks.add_task(run_download_job, user_id, [playlist_batch], quality, "downloads")
+        return {"message": "CSV upload successful, download started", "status": "starting", "track_count": len(tracks)}
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"CSV parsing error: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
