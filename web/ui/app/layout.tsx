@@ -8,6 +8,11 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
     title: "Offlineify",
     description: "Download your playlists locally",
+    icons: {
+        icon: '/offlineify-logo.png',
+        shortcut: '/offlineify-logo.png',
+        apple: '/offlineify-logo.png',
+    }
 };
 
 export default function RootLayout({
