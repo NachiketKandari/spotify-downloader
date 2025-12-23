@@ -1,6 +1,6 @@
 'use client'
 import { useSession, signIn, signOut } from "next-auth/react"
-import { ShieldCheck, Music, Download } from "lucide-react"
+import { ShieldCheck, Music, Download, Upload } from "lucide-react"
 import Image from "next/image"
 import Dashboard from "./components/Dashboard"
 import CSVUpload from "./components/CSVUpload"
@@ -84,7 +84,7 @@ export default function Home() {
                             }}
                             className="w-full md:w-auto bg-neutral-800 text-white px-8 py-4 rounded-full font-bold text-lg hover:bg-neutral-700 transition transform hover:scale-105 flex items-center justify-center gap-3 border border-neutral-700"
                         >
-                            <Download />
+                            <Upload />
                             Upload Playlist
                         </button>
                     </div>
@@ -109,7 +109,7 @@ export default function Home() {
                     <div className="text-center mb-12">
                         <h2 className="text-4xl font-bold mb-4">Upload Spotify CSV</h2>
                         <p className="text-neutral-400 text-lg">
-                            Don't want to login? Export your playlist as CSV from Spotify and upload it here.
+                            Don&apos;t want to login? Export your playlist as CSV from Spotify and upload it here.
                         </p>
                     </div>
                     <CSVUpload apiBase={process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'} />
