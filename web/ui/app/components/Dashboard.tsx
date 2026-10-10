@@ -73,7 +73,7 @@ export default function Dashboard({ accessToken, userEmail, authError }: Dashboa
     const [loading, setLoading] = useState(true)
     const [downloading, setDownloading] = useState(false)
     const [status, setStatus] = useState<any>(null)
-    const [quality, setQuality] = useState('320')
+    const [format, setFormat] = useState('m4a')
     const [downloadPath, setDownloadPath] = useState('downloads') // Default 'downloads' for Cloud Mode
     const [pickingFolder, setPickingFolder] = useState(false)
     const [showSuccess, setShowSuccess] = useState(false)
@@ -299,7 +299,7 @@ export default function Dashboard({ accessToken, userEmail, authError }: Dashboa
                     'Content-Type': 'application/json',
                     'x-user-id': userEmail
                 },
-                body: JSON.stringify({ playlists: batches, quality, output_path: downloadPath })
+                body: JSON.stringify({ playlists: batches, format, output_path: downloadPath })
             })
         } catch (e) {
             console.error("Backend Error", e)
@@ -364,14 +364,14 @@ export default function Dashboard({ accessToken, userEmail, authError }: Dashboa
                     </div>
                     <div className="h-10 w-px bg-neutral-700"></div>
                     <div>
-                        <div className="text-neutral-400 text-sm font-medium">Quality</div>
+                        <div className="text-neutral-400 text-sm font-medium">Format</div>
                         <select
-                            value={quality}
-                            onChange={(e) => setQuality(e.target.value)}
+                            value={format}
+                            onChange={(e) => setFormat(e.target.value)}
                             className="bg-neutral-900 text-white rounded px-2 py-1 mt-1 border border-neutral-700 focus:border-green-500 outline-none"
                         >
-                            <option value="320">High (320kbps)</option>
-                            <option value="192">Standard (192kbps)</option>
+                            <option value="m4a">M4A — original quality (fast)</option>
+                            <option value="mp3">MP3 320 kbps (re-encoded)</option>
                         </select>
                     </div>
                 </div>

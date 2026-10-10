@@ -48,6 +48,11 @@ export default function OutcomePanel({
                     {actionLabel}
                 </Button>
             </div>
+            {zipUrl && (
+                <p className="text-content-faint text-xs mt-3">
+                    Built and streamed live — the server forgets these files once you have them.
+                </p>
+            )}
         </motion.div>
     )
 }

@@ -37,7 +37,7 @@ const formatDuration = (ms?: number) => {
 
 export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps) {
     const [url, setUrl] = useState('')
-    const [quality, setQuality] = useState('320')
+    const [format, setFormat] = useState('m4a')
     const [userId] = useState(() => `link_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`)
 
     // Phase 1: preview; phase 2: selection + download; then job status.
@@ -105,7 +105,7 @@ export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps
                 body: JSON.stringify({
                     preview_token: preview.preview_token,
                     selected_indexes: Array.from(selected).sort((a, b) => a - b),
-                    quality,
+                    format,
                 })
             })
             const data = await res.json()
@@ -174,7 +174,7 @@ export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps
                 <StatusPanel
                     status={status}
                     onCancel={handleCancel}
-                    onZip={zipUrl}
+                    onZip={() => window.open(zipUrl(), '_blank')}
                     zipLabel="Download Playlist as ZIP"
                     saveUrl={saveUrl}
                 />
@@ -287,10 +287,10 @@ export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps
                             <Button variant="secondary" size="sm" onClick={toggleAll}>
                                 {allSelected ? 'Clear All' : 'Select All'}
                             </Button>
-                            <Field label="Quality:">
-                                <Select value={quality} onChange={(e) => setQuality(e.target.value)} className="w-auto">
-                                    <option value="320">High (320kbps)</option>
-                                    <option value="192">Standard (192kbps)</option>
+                            <Field label="Format:">
+                                <Select value={format} onChange={(e) => setFormat(e.target.value)} className="w-auto">
+                                    <option value="m4a">M4A — original quality (fast)</option>
+                                    <option value="mp3">MP3 320 kbps (re-encoded)</option>
                                 </Select>
                             </Field>
                             <Button

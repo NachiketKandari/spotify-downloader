@@ -1,20 +1,30 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Query, UploadFile
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, BackgroundTasks, Form, HTTPException, Header, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict
+from urllib.parse import quote
+import mimetypes
 import io
 import os
-import uuid
 import random
 import time
 import zipfile
 import pandas as pd
-from starlette.background import BackgroundTask
+from . import housekeeping
 from .downloader import process_track
 from .link_download import is_playlist_url, preview_playlist, run_link_job, safe_name
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Hourly sweep that deletes downloads nobody picked up (see housekeeping).
+    housekeeping.start_cleanup_thread()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 # Allow CORS for local development
 app.add_middleware(
@@ -45,6 +55,7 @@ class PlaylistBatch(BaseModel):
 class DownloadRequest(BaseModel):
     playlists: List[PlaylistBatch]
     quality: str = "320"
+    format: str = "m4a"  # "m4a" (passthrough, default) or "mp3" (re-encode)
     output_path: str = "downloads" # Legacy param, effectively ignored/overridden by multi-user logic
 
 class JobState(BaseModel):
@@ -65,24 +76,98 @@ def get_job_state(user_id: str) -> JobState:
         job_states[user_id] = JobState()
     return job_states[user_id]
 
-def zip_folder(folder: str, zip_path: str) -> str:
-    """Zip a folder with UTF-8 entry names (make_archive mangles accents)."""
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
-        for root, _, files in os.walk(folder):
-            for name in files:
-                full = os.path.join(root, name)
-                # zipfile wants forward slashes and utf-8 encoded names.
-                archive.write(full, os.path.relpath(full, folder))
-    return zip_path
+class _ZipSink(io.RawIOBase):
+    """Unseekable byte sink; the zip generator drains it after every file."""
 
-def remove_file(path: str) -> None:
-    """BackgroundTask: delete a temp file once it has been sent."""
+    def __init__(self) -> None:
+        self.buffer = bytearray()
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, data: bytes) -> int:
+        self.buffer += data
+        return len(data)
+
+    def take(self) -> bytes:
+        chunk = bytes(self.buffer)
+        self.buffer.clear()
+        return chunk
+
+
+def iter_zip(folder: str):
+    """
+    Stream `folder` as a ZIP.
+
+    Entries are stored, not deflated: audio is already compressed, so this
+    costs no compression CPU and the archive is identical in size. Nothing is
+    written to disk. When the browser cancels mid-way the generator closes
+    early and the files stay; once every byte has been yielded they are
+    removed from the server (see housekeeping).
+    """
+    housekeeping.mark_active(folder)
+    sink = _ZipSink()
+    delivered = False
     try:
-        os.remove(path)
-    except OSError:
-        pass
+        with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED, allowZip64=True) as archive:
+            for root, _, files in os.walk(folder):
+                for name in files:
+                    full = os.path.join(root, name)
+                    # zipfile wants forward slashes; utf-8 names are kept intact.
+                    archive.write(full, os.path.relpath(full, folder).replace(os.sep, "/"))
+                    chunk = sink.take()
+                    if chunk:
+                        yield chunk
+        chunk = sink.take()
+        if chunk:
+            yield chunk
+        delivered = True
+    finally:
+        housekeeping.unmark_active(folder)
+        if delivered:
+            housekeeping.remove_after_delivery(folder)
 
-def run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str, output_path: str = "downloads"):
+
+def iter_file(path: str):
+    """Stream one file; it is removed from the server once fully delivered."""
+    housekeeping.mark_active(path)
+    delivered = False
+    try:
+        with open(path, "rb") as handle:
+            while chunk := handle.read(256 * 1024):
+                yield chunk
+        delivered = True
+    finally:
+        housekeeping.unmark_active(path)
+        if delivered:
+            housekeeping.remove_after_delivery(path)
+
+
+def attachment_headers(download_name: str) -> Dict[str, str]:
+    """Content-Disposition that survives non-ASCII names (Hindi playlists etc.)."""
+    fallback = download_name.encode("ascii", "ignore").decode().strip() or "download"
+    return {"Content-Disposition": f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{quote(download_name)}'}
+
+
+def zip_response(folder: str, download_name: str) -> StreamingResponse:
+    """One streamed, stored ZIP; the folder is cleared after delivery."""
+    return StreamingResponse(
+        iter_zip(folder),
+        media_type="application/zip",
+        headers=attachment_headers(download_name),
+    )
+
+
+def folder_is_empty(folder: str) -> bool:
+    return not any(files for _, _, files in os.walk(folder))
+
+def run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str, output_path: str = "downloads", fmt: str = "m4a"):
+    """Public entry point: waits for the global download slot, then runs the job."""
+    with housekeeping.download_slot(get_job_state(user_id)):
+        _run_download_job(user_id, playlists, quality, output_path, fmt)
+
+
+def _run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str, output_path: str, fmt: str):
     state = get_job_state(user_id)
     state.status = "working"
     
@@ -109,10 +194,11 @@ def run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str,
     else:
         base_output_path = os.path.join("downloads", safe_user_id)
 
-    # yt-dlp is driven by matcher.py; here we only choose the destination.
+    # yt-dlp is driven by matcher.py; here we only choose destination + format.
     ydl_opts = {
         'output_dir': base_output_path,
         'quality': quality,
+        'format': fmt,
     }
 
     if not os.path.exists(base_output_path):
@@ -207,7 +293,7 @@ def read_root():
 
 @app.get("/api/file")
 def get_file(path: str, user_id: str):
-    """Serve a specific file. Path is relative to 'downloads/'."""
+    """Serve one file; it is removed from the server once the browser got it."""
     # Security: Ensure path doesn't escape downloads/
     safe_path = os.path.normpath(os.path.join("downloads", path))
     if not safe_path.startswith("downloads"):
@@ -220,9 +306,13 @@ def get_file(path: str, user_id: str):
     if not path.startswith(safe_user_id):
             raise HTTPException(status_code=403, detail="Access denied")
 
-    if os.path.exists(safe_path):
-        return FileResponse(safe_path, filename=os.path.basename(path))
-    return {"error": "File not found"}
+    if not os.path.isfile(safe_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    headers = attachment_headers(os.path.basename(path))
+    headers["Content-Length"] = str(os.path.getsize(safe_path))
+    media_type = mimetypes.guess_type(safe_path)[0] or "application/octet-stream"
+    return StreamingResponse(iter_file(safe_path), media_type=media_type, headers=headers)
 
 @app.post("/api/download")
 async def start_download(request: DownloadRequest, background_tasks: BackgroundTasks, x_user_id: str = Header(...)):
@@ -235,7 +325,7 @@ async def start_download(request: DownloadRequest, background_tasks: BackgroundT
         return {"message": "Job already in progress", "status": "working"}
     
     # Start background task with USER CONTEXT
-    background_tasks.add_task(run_download_job, x_user_id, request.playlists, request.quality, request.output_path)
+    background_tasks.add_task(run_download_job, x_user_id, request.playlists, request.quality, request.output_path, request.format)
     return {"message": "Download started", "status": "starting"}
 
 @app.get("/api/status")
@@ -246,21 +336,17 @@ def get_status(user_id: Optional[str] = Query(None)):
 
 @app.get("/api/zip")
 def download_zip(user_id: str):
-    """Zips the USER'S download folder"""
+    """Stream the user's whole download folder as one ZIP (then clear it)."""
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID required")
         
     safe_user_id = "".join([c for c in user_id if c.isalnum() or c in ['@', '.', '-', '_']])
     user_dir = os.path.join("downloads", safe_user_id)
     
-    if not os.path.exists(user_dir):
+    if not os.path.isdir(user_dir) or folder_is_empty(user_dir):
         raise HTTPException(status_code=404, detail="Nothing to download")
 
-    zip_filename = f"offlineify_{safe_user_id}_{uuid.uuid4().hex[:8]}"
-    zip_path = os.path.join("downloads", f"{zip_filename}.zip")
-    
-    zip_folder(user_dir, zip_path)
-    return FileResponse(zip_path, filename="your_music.zip", background=BackgroundTask(remove_file, zip_path))
+    return zip_response(user_dir, "your_music.zip")
 
 @app.get("/api/choose-directory")
 def choose_directory():
@@ -365,7 +451,7 @@ def parse_csv_tracks(contents: bytes) -> List[Track]:
     return tracks
 
 @app.post("/api/csv-download")
-async def csv_download(file: UploadFile, background_tasks: BackgroundTasks, quality: str = "320", user_id: str = "csv_user"):
+async def csv_download(file: UploadFile, background_tasks: BackgroundTasks, format: str = Form("m4a"), user_id: str = Form("csv_user")):
     """Upload a Spotify CSV export and download the tracks"""
     try:
         contents = await file.read()
@@ -379,7 +465,7 @@ async def csv_download(file: UploadFile, background_tasks: BackgroundTasks, qual
         if state.status == "working":
             return {"message": "Job already in progress", "status": "working"}
         
-        background_tasks.add_task(run_download_job, user_id, [playlist_batch], quality, "downloads")
+        background_tasks.add_task(run_download_job, user_id, [playlist_batch], "320", "downloads", format)
         return {"message": "CSV upload successful, download started", "status": "starting", "track_count": len(tracks)}
         
     except Exception as e:
@@ -388,6 +474,7 @@ async def csv_download(file: UploadFile, background_tasks: BackgroundTasks, qual
 class LinkDownloadRequest(BaseModel):
     url: Optional[str] = None
     quality: str = "320"
+    format: str = "m4a"  # "m4a" (passthrough, default) or "mp3" (re-encode)
     spotify_user_token: Optional[str] = None  # sent by the UI when logged in
     preview_token: Optional[str] = None       # from /api/link-preview
     selected_indexes: Optional[List[int]] = None  # subset of preview tracks
@@ -429,21 +516,20 @@ def start_link_download(request: LinkDownloadRequest, background_tasks: Backgrou
         request.spotify_user_token,
         request.preview_token,
         request.selected_indexes,
+        request.format,
     )
     return {"message": "Playlist download started", "status": "starting"}
 
 @app.get("/api/playlist-zip")
 def download_playlist_zip(user_id: str, playlist: str):
-    """Zips a single playlist folder from the user's downloads"""
+    """Stream one playlist folder as a ZIP (then clear it from the server)."""
     safe_user_id = "".join([c for c in user_id if c.isalnum() or c in ['@', '.', '-', '_']])
     playlist_dir = os.path.join("downloads", safe_user_id, safe_name(playlist))
 
-    if not os.path.isdir(playlist_dir):
+    if not os.path.isdir(playlist_dir) or folder_is_empty(playlist_dir):
         raise HTTPException(status_code=404, detail="Playlist not found")
 
-    zip_path = os.path.join("downloads", f"offlineify_{safe_user_id}_{uuid.uuid4().hex[:8]}.zip")
-    zip_folder(playlist_dir, zip_path)
-    return FileResponse(zip_path, filename=f"{safe_name(playlist)}.zip", background=BackgroundTask(remove_file, zip_path))
+    return zip_response(playlist_dir, f"{safe_name(playlist)}.zip")
 
 if __name__ == "__main__":
     import uvicorn

@@ -26,7 +26,8 @@ from typing import Dict, List, Optional, Tuple
 import requests
 from spotipy import Spotify
 
-from .matcher import TrackQuery, download_match, find_best_match
+from .housekeeping import download_slot
+from .matcher import DEFAULT_AUDIO_FORMAT, TrackQuery, download_match, find_best_match
 
 DOWNLOAD_ROOT = "downloads"
 
@@ -243,6 +244,22 @@ def run_link_job(
     user_token: Optional[str] = None,
     preview_token: Optional[str] = None,
     selected_indexes: Optional[List[int]] = None,
+    fmt: str = DEFAULT_AUDIO_FORMAT,
+):
+    """Public entry point: waits for the global download slot, then runs the job."""
+    with download_slot(state):
+        _run_link_job(state, user_id, url, quality, user_token, preview_token, selected_indexes, fmt)
+
+
+def _run_link_job(
+    state,
+    user_id: str,
+    url: str,
+    quality: str,
+    user_token: Optional[str],
+    preview_token: Optional[str],
+    selected_indexes: Optional[List[int]],
+    fmt: str,
 ):
     """
     Background job: get the track list, then match + download each selected track.
@@ -312,7 +329,7 @@ def run_link_job(
         time.sleep(random.uniform(1, 3))
 
         try:
-            file_path = download_match(match, query, playlist_dir, quality)
+            file_path = download_match(match, query, playlist_dir, quality=quality, fmt=fmt)
         except Exception as e:
             state.logs.append(f"Error {label}: {e}")
             state.completed += 1

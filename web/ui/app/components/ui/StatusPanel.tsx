@@ -35,6 +35,7 @@ function CompletedFileList({
                     </div>
                 ))}
             </div>
+            <p className="text-content-faint text-xs mt-2">Saving removes the file from the server.</p>
         </div>
     )
 }
@@ -109,6 +110,9 @@ export default function StatusPanel({
                     <Button variant="primary" size="lg" onClick={onZip} icon={<Download size={20} />} className="w-full">
                         {zipLabel}
                     </Button>
+                    <p className="text-content-faint text-xs mt-2 text-center">
+                        Built and streamed live — the server forgets these files once you have them.
+                    </p>
                 </div>
             )}
         </div>

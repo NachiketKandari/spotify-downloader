@@ -1,16 +1,19 @@
-"""Live test: embed a real Spotify cover into an MP3 and verify the tags.
+"""Live test: embed a real Spotify cover into an MP3 download and into an M4A
+file, then verify the tags on both.
 Run: .venv/bin/python tests/test_cover_embed.py
 """
 
 import os
 import shutil
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from mutagen.mp3 import MP3
+from mutagen.mp4 import MP4
 
-from web.api.matcher import TrackQuery, download_match, find_best_match
+from web.api.matcher import Match, TrackQuery, download_match, find_best_match, write_tags
 
 OUT = "tests/output/cover"
 
@@ -28,10 +31,36 @@ query = TrackQuery(
 )
 
 shutil.rmtree(OUT, ignore_errors=True)
+os.makedirs(OUT, exist_ok=True)
+
+# ---- M4A tagging (synthetic file, no download needed) ---------------------
+
+m4a_path = os.path.join(OUT, "tag-target.m4a")
+subprocess.run(
+    ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc", "-t", "1", "-c:a", "aac", m4a_path],
+    check=True,
+    capture_output=True,
+)
+synthetic_match = Match(video_id="x", title="Tum Hi Ho", duration=262, score=100.0,
+                        source="ytmusic", artists=["Arijit Singh"], album="Aashiqui 2")
+write_tags(m4a_path, query, synthetic_match)
+
+audio = MP4(m4a_path)
+assert str(audio.tags["\xa9nam"][0]) == "Tum Hi Ho", "m4a title tag wrong"
+assert str(audio.tags["\xa9ART"][0]) == "Arijit Singh", "m4a artist tag wrong"
+assert str(audio.tags["\xa9alb"][0]) == "Aashiqui 2", "m4a album tag wrong"
+assert audio.tags["trkn"][0] == (1, 10), "m4a track number tag wrong"
+covers = audio.tags.get("covr")
+assert covers and len(covers[0]) > 10_000, "no m4a cover art embedded"
+print("M4A tags OK — cover:", len(covers[0]), "bytes")
+
+# ---- MP3 download + tagging (full live path) ------------------------------
+
+mp3_dir = os.path.join(OUT, "mp3")
 match = find_best_match(query)
 print("match:", match.title, "score:", round(match.score, 1))
 
-path = download_match(match, query, OUT, "320")
+path = download_match(match, query, mp3_dir, quality="320", fmt="mp3")
 print("file:", path)
 
 audio = MP3(path)

@@ -1,6 +1,6 @@
 """
 Track matcher: finds the best YouTube Music / YouTube audio source for a Spotify
-track and downloads it as a tagged MP3.
+track and downloads it as a tagged audio file (M4A by default, MP3 optional).
 
 This module is the single place where "which video is the right one?" is decided.
 Everything else (login downloads, CSV uploads, pasted playlist links) calls
@@ -22,6 +22,7 @@ import requests
 import yt_dlp
 from mutagen.id3 import APIC, TALB, TDRC, TIT2, TPE1, TRCK, TXXX, ID3, error
 from mutagen.mp3 import MP3
+from mutagen.mp4 import MP4, MP4Cover
 from PIL import Image
 from ytmusicapi import YTMusic
 
@@ -72,6 +73,12 @@ ART_HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (Offlineify cover art fetcher)"}
 # growing waits: 5s, 10s, 15s.
 DOWNLOAD_RETRIES = 3
 DOWNLOAD_RETRY_BASE_WAIT = 5
+
+# Output format. "m4a" writes YouTube's AAC stream to disk untouched: no
+# re-encode, no quality loss, and effectively no server CPU. "mp3" exists for
+# players that need it and re-encodes every track via ffmpeg.
+DEFAULT_AUDIO_FORMAT = "m4a"
+AUDIO_FORMATS = ("m4a", "mp3")
 
 
 # ---------------------------------------------------------------------------
@@ -366,19 +373,32 @@ def find_best_match(query: TrackQuery, allow_ytdlp_fallback: bool = True) -> Opt
 # Downloading and tagging
 # ---------------------------------------------------------------------------
 
-def ytdlp_download_options(output_dir: str, quality: str, base_name: str = "%(artist,uploader)s - %(title)s") -> Dict[str, Any]:
+def ytdlp_download_options(output_dir: str, fmt: str, quality: str, base_name: str = "%(artist,uploader)s - %(title)s") -> Dict[str, Any]:
     """yt-dlp options used for every track download.
+
+    `fmt` is "m4a" (default) or "mp3". M4A prefers YouTube's AAC stream and
+    leaves it untouched, so ffmpeg only runs for the rare Opus-only track.
+    MP3 passes every track through ffmpeg's LAME encoder at `quality` kbps.
 
     `base_name` is the file name template; callers can pass a fixed name to
     control exactly how the file lands on disk.
     """
-    return {
-        "format": "bestaudio/best",
-        "postprocessors": [{
+    fmt = fmt if fmt in AUDIO_FORMATS else DEFAULT_AUDIO_FORMAT
+    if fmt == "mp3":
+        source = "bestaudio/best"
+        postprocessors = [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
             "preferredquality": quality,
-        }],
+        }]
+    else:
+        source = "bestaudio[ext=m4a]/bestaudio"
+        # Keeps AAC untouched; transcodes only when the track has no AAC stream.
+        postprocessors = [{"key": "FFmpegExtractAudio", "preferredcodec": "m4a"}]
+
+    return {
+        "format": source,
+        "postprocessors": postprocessors,
         "outtmpl": os.path.join(output_dir, f"{base_name}.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
@@ -388,22 +408,26 @@ def ytdlp_download_options(output_dir: str, quality: str, base_name: str = "%(ar
     }
 
 
-def download_match(match: Match, query: TrackQuery, output_dir: str, quality: str = "320") -> Optional[str]:
+def download_match(match: Match, query: TrackQuery, output_dir: str, quality: str = "320", fmt: str = DEFAULT_AUDIO_FORMAT) -> Optional[str]:
     """
-    Download a matched video and write Spotify tags onto the MP3.
+    Download a matched video and write Spotify tags onto the file.
+
+    `fmt` selects the output format: "m4a" copies YouTube's AAC audio
+    (default, no re-encode), "mp3" re-encodes via ffmpeg.
 
     YouTube intermittently answers with 403/429 responses; those are retried
-    with growing waits. The file is named "<artist> - <title>.mp3" from the
+    with growing waits. The file is named "<artist> - <title>.<fmt>" from the
     Spotify metadata, so names are predictable.
     Returns the final file path, or None if the download produced no file.
     """
+    fmt = fmt if fmt in AUDIO_FORMATS else DEFAULT_AUDIO_FORMAT
     os.makedirs(output_dir, exist_ok=True)
 
     # Clean up the name for the filesystem: no slashes, no comma piles.
     safe_base = f"{query.artist} - {query.name}".replace("/", " ")
     safe_base = re.sub(r"\s*[,;]\s*", " ", safe_base)
     safe_base = _SPACE_RE.sub(" ", safe_base).strip() or "track"
-    options = ytdlp_download_options(output_dir, quality, base_name=safe_base)
+    options = ytdlp_download_options(output_dir, fmt, quality, base_name=safe_base)
 
     info = None
     for attempt in range(DOWNLOAD_RETRIES):
@@ -424,7 +448,7 @@ def download_match(match: Match, query: TrackQuery, output_dir: str, quality: st
 
     with yt_dlp.YoutubeDL(options) as ydl:
         file_path = ydl.prepare_filename(info)
-    file_path = os.path.splitext(file_path)[0] + ".mp3"
+    file_path = os.path.splitext(file_path)[0] + f".{fmt}"
 
     if not os.path.exists(file_path):
         return None
@@ -434,44 +458,87 @@ def download_match(match: Match, query: TrackQuery, output_dir: str, quality: st
 
 
 def write_tags(file_path: str, query: TrackQuery, match: Match) -> None:
-    """Write Spotify metadata and cover art onto an MP3 file (best effort)."""
-    cover_url = query.cover_url or match.thumbnail
-
+    """Write Spotify metadata and cover art onto the downloaded file (best effort)."""
     try:
-        audio = MP3(file_path, ID3=ID3)
-        try:
-            audio.add_tags()
-        except error:
-            pass
-
-        audio.tags.add(TIT2(encoding=3, text=query.name))
-        audio.tags.add(TPE1(encoding=3, text=query.artist))
-        if query.album:
-            audio.tags.add(TALB(encoding=3, text=query.album))
-        if query.release_date:
-            audio.tags.add(TDRC(encoding=3, text=query.release_date))
-        if query.track_number:
-            track_number = str(query.track_number)
-            if query.total_tracks:
-                track_number += f"/{query.total_tracks}"
-            audio.tags.add(TRCK(encoding=3, text=track_number))
-        if query.explicit is not None:
-            audio.tags.add(TXXX(encoding=3, desc="ITUNESADVISORY", text="1" if query.explicit else "0"))
-
-        if cover_url:
-            # Cover art is best-effort: a dead image URL must not lose the tags.
-            try:
-                embed_cover(audio, cover_url, from_spotify=bool(query.cover_url))
-            except Exception as e:
-                print(f"Cover art error for {file_path}: {e}")
-
-        audio.save()
+        if file_path.lower().endswith(".m4a"):
+            _write_mp4_tags(file_path, query, match)
+        else:
+            _write_id3_tags(file_path, query, match)
     except Exception as e:
         print(f"Tagging error for {file_path}: {e}")
 
 
-def embed_cover(audio: MP3, cover_url: str, from_spotify: bool) -> None:
-    """Download and embed cover art, square-cropping non-Spotify images."""
+def _write_id3_tags(file_path: str, query: TrackQuery, match: Match) -> None:
+    """ID3 tags, used for MP3 files."""
+    audio = MP3(file_path, ID3=ID3)
+    try:
+        audio.add_tags()
+    except error:
+        pass
+
+    audio.tags.add(TIT2(encoding=3, text=query.name))
+    audio.tags.add(TPE1(encoding=3, text=query.artist))
+    if query.album:
+        audio.tags.add(TALB(encoding=3, text=query.album))
+    if query.release_date:
+        audio.tags.add(TDRC(encoding=3, text=query.release_date))
+    if query.track_number:
+        track_number = str(query.track_number)
+        if query.total_tracks:
+            track_number += f"/{query.total_tracks}"
+        audio.tags.add(TRCK(encoding=3, text=track_number))
+    if query.explicit is not None:
+        audio.tags.add(TXXX(encoding=3, desc="ITUNESADVISORY", text="1" if query.explicit else "0"))
+
+    cover_url = query.cover_url or match.thumbnail
+    if cover_url:
+        # Cover art is best-effort: a dead image URL must not lose the tags.
+        try:
+            audio.tags.add(APIC(
+                encoding=3,
+                mime="image/jpeg",
+                type=3,
+                desc="Cover",
+                data=fetch_cover_jpeg(cover_url, from_spotify=bool(query.cover_url)),
+            ))
+        except Exception as e:
+            print(f"Cover art error for {file_path}: {e}")
+
+    audio.save()
+
+
+def _write_mp4_tags(file_path: str, query: TrackQuery, match: Match) -> None:
+    """MP4 atoms, used for M4A files (same metadata set as the ID3 path)."""
+    audio = MP4(file_path)
+    if audio.tags is None:
+        audio.add_tags()
+
+    audio["\xa9nam"] = [query.name]
+    audio["\xa9ART"] = [query.artist]
+    if query.album:
+        audio["\xa9alb"] = [query.album]
+    if query.release_date:
+        audio["\xa9day"] = [query.release_date]
+    if query.track_number:
+        audio["trkn"] = [(query.track_number, query.total_tracks or 0)]
+    if query.explicit is not None:
+        audio["rtng"] = [1 if query.explicit else 0]
+
+    cover_url = query.cover_url or match.thumbnail
+    if cover_url:
+        try:
+            audio["covr"] = [MP4Cover(
+                fetch_cover_jpeg(cover_url, from_spotify=bool(query.cover_url)),
+                imageformat=MP4Cover.FORMAT_JPEG,
+            )]
+        except Exception as e:
+            print(f"Cover art error for {file_path}: {e}")
+
+    audio.save()
+
+
+def fetch_cover_jpeg(cover_url: str, from_spotify: bool) -> bytes:
+    """Download cover art and return JPEG bytes, square-cropping non-Spotify images."""
     resp = requests.get(cover_url, headers=ART_HTTP_HEADERS, timeout=30)
     resp.raise_for_status()
     image = Image.open(io.BytesIO(resp.content))
@@ -484,4 +551,4 @@ def embed_cover(audio: MP3, cover_url: str, from_spotify: bool) -> None:
 
     image_io = io.BytesIO()
     image.convert("RGB").save(image_io, format="JPEG")
-    audio.tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=image_io.getvalue()))
+    return image_io.getvalue()

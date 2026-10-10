@@ -10,7 +10,7 @@ import os
 import time
 from typing import Any, Dict, Optional
 
-from .matcher import TrackQuery, download_match, find_best_match
+from .matcher import DEFAULT_AUDIO_FORMAT, TrackQuery, download_match, find_best_match
 
 DOWNLOAD_INDEX_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "downloaded_songs.json")
 DOWNLOAD_DIR = "downloads"
@@ -35,7 +35,7 @@ def save_download_index(index: Dict[str, Any]) -> None:
 
 
 def _output_dir(ydl_opts: Optional[Dict[str, Any]]) -> str:
-    """Where the MP3 lands. main.py passes it via ydl_opts['output_dir']."""
+    """Where the audio lands. main.py passes it via ydl_opts['output_dir']."""
     if ydl_opts and ydl_opts.get("output_dir"):
         return ydl_opts["output_dir"]
     return DOWNLOAD_DIR
@@ -43,6 +43,10 @@ def _output_dir(ydl_opts: Optional[Dict[str, Any]]) -> str:
 
 def _quality(ydl_opts: Optional[Dict[str, Any]]) -> str:
     return (ydl_opts or {}).get("quality", "320")
+
+
+def _fmt(ydl_opts: Optional[Dict[str, Any]]) -> str:
+    return (ydl_opts or {}).get("format") or DEFAULT_AUDIO_FORMAT
 
 
 def process_track(track: Dict[str, Any], ydl_opts: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -54,6 +58,7 @@ def process_track(track: Dict[str, Any], ydl_opts: Optional[Dict[str, Any]] = No
     """
     output_dir = _output_dir(ydl_opts)
     quality = _quality(ydl_opts)
+    fmt = _fmt(ydl_opts)
     os.makedirs(output_dir, exist_ok=True)
 
     track_uri = track.get("uri")
@@ -76,7 +81,7 @@ def process_track(track: Dict[str, Any], ydl_opts: Optional[Dict[str, Any]] = No
         return {"status": "error", "message": "No good audio match found on YouTube Music"}
 
     try:
-        file_path = download_match(match, query, output_dir, quality)
+        file_path = download_match(match, query, output_dir, quality=quality, fmt=fmt)
     except Exception as e:
         return {"status": "error", "message": f"Download failed: {e}"}
 

@@ -17,7 +17,7 @@ export default function CSVUpload({ apiBase }: CSVUploadProps) {
     const [uploading, setUploading] = useState(false)
     const [downloading, setDownloading] = useState(false)
     const [status, setStatus] = useState<any>(null)
-    const [quality, setQuality] = useState('320')
+    const [format, setFormat] = useState('m4a')
     // Generate unique session ID for this upload instance
     const [userId] = useState(() => `csv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`)
 
@@ -37,7 +37,7 @@ export default function CSVUpload({ apiBase }: CSVUploadProps) {
         try {
             const formData = new FormData()
             formData.append('file', file)
-            formData.append('quality', quality)
+            formData.append('format', format)
             formData.append('user_id', userId)
 
             const response = await fetch(`${apiBase}/api/csv-download`, {
@@ -123,10 +123,10 @@ export default function CSVUpload({ apiBase }: CSVUploadProps) {
 
                     {file && (
                         <div className="flex justify-center pt-2">
-                            <Field label="Quality:">
-                                <Select value={quality} onChange={(e) => setQuality(e.target.value)} disabled={downloading}>
-                                    <option value="320">High (320kbps)</option>
-                                    <option value="192">Standard (192kbps)</option>
+                            <Field label="Format:">
+                                <Select value={format} onChange={(e) => setFormat(e.target.value)} disabled={downloading}>
+                                    <option value="m4a">M4A — original quality (fast)</option>
+                                    <option value="mp3">MP3 320 kbps (re-encoded)</option>
                                 </Select>
                             </Field>
                         </div>

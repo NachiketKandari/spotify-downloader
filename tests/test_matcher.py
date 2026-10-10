@@ -5,7 +5,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from web.api.matcher import Match, TrackQuery, blocked_words, pick_best, score_candidate
+from web.api.matcher import Match, TrackQuery, blocked_words, pick_best, score_candidate, ytdlp_download_options
 
 PASS = []
 
@@ -69,6 +69,16 @@ check("no acceptable candidates -> None", pick_best(query, [video, live]) is Non
 feat = TrackQuery(name="Lovely", artist="Billie Eilish;Khalid", duration_ms=200_000)
 feat_candidate = song("Lovely (with Khalid)", 200, ["Billie Eilish", "Khalid"], source="ytmusic")
 check("featured artist match accepted", score_candidate(feat, feat_candidate) is not None)
+
+# 10. Output format options.
+m4a_opts = ytdlp_download_options("out", "m4a", "320")
+check("m4a prefers the AAC stream", m4a_opts["format"].startswith("bestaudio[ext=m4a]"))
+check("m4a postprocessor targets m4a", m4a_opts["postprocessors"][0]["preferredcodec"] == "m4a")
+mp3_opts = ytdlp_download_options("out", "mp3", "320")
+check("mp3 postprocessor targets mp3", mp3_opts["postprocessors"][0]["preferredcodec"] == "mp3")
+check("mp3 keeps the requested quality", mp3_opts["postprocessors"][0]["preferredquality"] == "320")
+check("unknown format falls back to m4a",
+      ytdlp_download_options("out", "flac", "320")["postprocessors"][0]["preferredcodec"] == "m4a")
 
 failed = [name for name, ok in PASS if not ok]
 print(f"\n{len(PASS) - len(failed)}/{len(PASS)} passed")
