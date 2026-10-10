@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { Link2, Download, X, Loader2, CheckCircle, ListMusic, AlertTriangle } from 'lucide-react'
+import { Link2, Download, X, Loader2, CheckCircle, ListMusic, AlertTriangle, FileDown } from 'lucide-react'
 import { motion } from 'framer-motion'
 import Button from './ui/Button'
 import Card from './ui/Card'
@@ -91,6 +91,15 @@ export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps
     const toggleAll = () => {
         if (!preview) return
         setSelected(allSelected ? new Set() : new Set(preview.tracks.map(t => t.index)))
+    }
+
+    const exportCsv = () => {
+        if (!preview || selected.size === 0) return
+        const indexes = Array.from(selected).sort((a, b) => a - b).join(',')
+        const url = withAccessKey(
+            `${apiBase}/api/link-csv?preview_token=${encodeURIComponent(preview.preview_token)}&selected=${indexes}`
+        )
+        window.open(url, '_blank')
     }
 
     const startDownload = async () => {
@@ -307,6 +316,15 @@ export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps
                                     <option value="mp3">MP3 320 kbps (re-encoded)</option>
                                 </Select>
                             </Field>
+                            <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={exportCsv}
+                                icon={<FileDown size={14} />}
+                                disabled={selected.size === 0}
+                            >
+                                Export CSV
+                            </Button>
                             <Button
                                 variant="primary"
                                 size="md"

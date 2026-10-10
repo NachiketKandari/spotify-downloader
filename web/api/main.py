@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, Form, HTTPException, Header, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 from urllib.parse import quote
@@ -15,7 +15,7 @@ import pandas as pd
 from . import housekeeping
 from .auth import PasswordGuard
 from .downloader import process_track
-from .link_download import is_playlist_url, preview_playlist, run_link_job, safe_name
+from .link_download import csv_export, is_playlist_url, preview_playlist, run_link_job, safe_name
 
 
 @asynccontextmanager
@@ -514,6 +514,19 @@ def link_preview(request: PlaylistPreviewRequest):
         return preview_playlist(request.url, user_token=request.spotify_user_token)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not read playlist: {e}")
+
+@app.get("/api/link-csv")
+def link_csv(preview_token: Optional[str] = None, url: Optional[str] = None, selected: Optional[str] = None):
+    """Export a resolved playlist as an Exportify-compatible CSV (re-uploadable)."""
+    try:
+        playlist_name, csv_text = csv_export(preview_token, url, selected)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not export CSV: {e}")
+    return Response(
+        csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers=attachment_headers(f"{playlist_name}.csv"),
+    )
 
 @app.post("/api/link-download")
 def start_link_download(request: LinkDownloadRequest, background_tasks: BackgroundTasks, user_id: str = Query(...)):

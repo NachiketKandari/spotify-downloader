@@ -108,7 +108,8 @@ Login → pick playlists → Download → each track becomes a "Save" link, plus
 ### Option 2: Paste a Playlist Link
 
 Paste any public Spotify playlist URL (`https://open.spotify.com/playlist/...`) → Download Playlist.
-Watch progress live, cancel anytime, grab the finished playlist as a ZIP.
+Watch progress live, cancel anytime, grab the finished playlist as a ZIP, or export the
+selected tracks as a CSV (the same Exportify-compatible format the CSV tab accepts).
 
 ### Option 3: CSV Upload (No Login)
 
@@ -146,6 +147,12 @@ Start a download job with Spotify authentication. Headers: `x-user-id` (email).
 
 Start a download from a pasted playlist link. Params: `user_id`. Body: `{ url, format }` where
 `format` is `"m4a"` (default) or `"mp3"`.
+
+### `/api/link-csv` (GET)
+
+Export a resolved playlist (or a cached `preview_token`) as an Exportify-compatible CSV.
+Params: `preview_token` or `url`, optional `selected` (comma-separated preview indexes).
+The file uploads right back through `/api/csv-download`.
 
 ### `/api/csv-download` (POST)
 

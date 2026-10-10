@@ -99,6 +99,7 @@ class TrackQuery:
     track_number: Optional[int] = None
     total_tracks: Optional[int] = None
     explicit: Optional[bool] = None
+    uri: str = ""  # spotify:track:... when known (used by the CSV export)
 
     @classmethod
     def from_dict(cls, track: Dict[str, Any]) -> "TrackQuery":
@@ -113,6 +114,7 @@ class TrackQuery:
             track_number=track.get("track_number"),
             total_tracks=track.get("total_tracks"),
             explicit=track.get("explicit"),
+            uri=track.get("uri") or "",
         )
 
     @property

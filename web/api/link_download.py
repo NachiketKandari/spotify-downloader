@@ -15,6 +15,8 @@ whole playlist.
 """
 
 import html as html_module
+import csv
+import io
 import json
 import os
 import random
@@ -110,6 +112,7 @@ def _walk_playlist(client: Spotify, url: str) -> Tuple[str, List[TrackQuery], Op
                 track_number=track.get("track_number"),
                 total_tracks=album.get("total_tracks"),
                 explicit=track.get("explicit"),
+                uri=track.get("uri") or "",
             ))
         results = client.next(results) if results.get("next") else None
 
@@ -165,6 +168,7 @@ def _resolve_with_embed(url: str) -> Tuple[str, List[TrackQuery], Optional[str]]
             duration_ms=entry.get("duration"),
             cover_url=cover_url,
             explicit=entry.get("isExplicit"),
+            uri=uri,
         ))
 
     warning = None
@@ -253,6 +257,65 @@ def preview_playlist(url: str, user_token: Optional[str] = None) -> Dict:
         "tracks": [track_to_payload(i, t) for i, t in enumerate(tracks)],
         "warning": warning,
     }
+
+
+# ---------------------------------------------------------------------------
+# CSV export: the same columns the Dashboard exports, so an exported file can
+# be uploaded right back through the CSV tab
+# ---------------------------------------------------------------------------
+
+CSV_COLUMNS = [
+    "Track URI", "Track Name", "Artist Name(s)", "Album Name", "Album Artist Name(s)",
+    "Album Image URL", "Album Release Date", "Duration (ms)", "Track Number",
+    "Total Tracks", "Explicit",
+]
+
+
+def tracks_to_csv(tracks: List[TrackQuery]) -> str:
+    """Exportify-compatible CSV (uploadable back through the CSV tab)."""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(CSV_COLUMNS)
+    for t in tracks:
+        writer.writerow([
+            t.uri,
+            t.name,
+            t.artist,
+            t.album,
+            t.album_artist,
+            t.cover_url or "",
+            t.release_date or "",
+            t.duration_ms if t.duration_ms is not None else "",
+            t.track_number if t.track_number is not None else "",
+            t.total_tracks if t.total_tracks is not None else "",
+            "true" if t.explicit else "false",
+        ])
+    return buffer.getvalue()
+
+
+def csv_export(preview_token: Optional[str], url: Optional[str], selected: Optional[str]) -> Tuple[str, str]:
+    """
+    Return (playlist_name, csv_text) for a cached preview or a playlist URL.
+
+    `selected` is a comma-separated list of preview indexes; without it every
+    resolved track is exported.
+    """
+    if preview_token and preview_token in PREVIEW_CACHE:
+        preview = PREVIEW_CACHE[preview_token]
+        name, tracks = preview["name"], list(preview["tracks"])
+    else:
+        if not url or not is_playlist_url(url):
+            raise RuntimeError("Provide a preview_token or a valid playlist link")
+        name, tracks, _warning = resolve_playlist(url)
+
+    if selected:
+        wanted = {int(part) for part in selected.split(",") if part.strip().isdigit()}
+        tracks = [t for i, t in enumerate(tracks) if i in wanted]
+
+    if not tracks:
+        raise RuntimeError("Nothing to export")
+
+    return name, tracks_to_csv(tracks)
 
 
 # ---------------------------------------------------------------------------
