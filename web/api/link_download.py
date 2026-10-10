@@ -179,19 +179,42 @@ def _resolve_with_embed(url: str) -> Tuple[str, List[TrackQuery], Optional[str]]
 def resolve_playlist(url: str, user_token: Optional[str] = None) -> Tuple[str, List[TrackQuery], Optional[str]]:
     """Return (playlist_name, tracks, warning). Tries the user token, then the embed page."""
     errors = []
+    token_error: Optional[str] = None
 
     if user_token:
         try:
             return _resolve_with_user_token(url, user_token)
         except Exception as e:
+            token_error = str(e)
             errors.append(f"login token failed: {e}")
 
     try:
-        return _resolve_with_embed(url)
+        name, tracks, warning = _resolve_with_embed(url)
     except Exception as e:
         errors.append(f"embed page failed: {e}")
+        raise RuntimeError("Could not read this playlist. " + " | ".join(errors))
 
-    raise RuntimeError("Could not read this playlist. " + " | ".join(errors))
+    if token_error:
+        # A token WAS sent but Spotify rejected it — say so, otherwise this
+        # looks identical to "not logged in" and the user is left guessing.
+        if "404" in token_error:
+            # The classic case: Spotify-owned editorial playlists ("This Is …",
+            # Today's Top Hits, …) return 404 to development-mode apps even
+            # with a perfectly valid user token.
+            warning = (
+                "Spotify refused API access to this playlist (404). That usually means it is a "
+                "Spotify-owned editorial playlist, which development-mode apps cannot read — even "
+                "when logged in. Showing the public page instead (first 50 tracks). For the full "
+                "list, export it with Exportify and use the CSV tab, or copy the playlist into "
+                "your own account and paste that link."
+            )
+        else:
+            warning = (
+                f"Your Spotify login could not be used ({token_error}). "
+                "Showing what Spotify shares publicly (first 50 tracks max) — "
+                "log out and log in again for the full list."
+            )
+    return name, tracks, warning
 
 
 # ---------------------------------------------------------------------------

@@ -52,7 +52,14 @@ const handler = NextAuth({
             if (account && user) {
                 return {
                     accessToken: account.access_token,
-                    accessTokenExpires: Date.now() + (account.expires_at as number) * 1000,
+                    // Spotify reports expiry as `expires_at`: an absolute Unix
+                    // timestamp in seconds. Treating it as a duration made the
+                    // token look valid until the year ~2083, so after the first
+                    // hour a dead token was silently reused: the backend got a
+                    // 401 and fell back to Spotify's 50-track embed page while
+                    // the UI still said "logged in". Store real epoch ms.
+                    accessTokenExpires: ((account.expires_at as number) ??
+                        Math.floor(Date.now() / 1000) + (account.expires_in as number ?? 3600)) * 1000,
                     refreshToken: account.refresh_token,
                     user,
                 }
