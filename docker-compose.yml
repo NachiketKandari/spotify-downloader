@@ -1,20 +1,24 @@
 # Runs the backend (FastAPI + yt-dlp + ffmpeg) in Docker.
-#
-# The Next.js frontend is separate: either `cd web/ui && npm run dev` locally,
-# or a Vercel deployment pointed at this backend via NEXT_PUBLIC_BACKEND_URL.
-#
-# Usage: docker compose up --build
+# The Next.js frontend is separate / not deployed here.
+# Domain: offlineify.nachiketkandari.tech
 services:
   backend:
     build: .
     ports:
-      - "8000:8000"
-    # No credentials required: the backend receives the user's Spotify token
-    # per request from the UI, and falls back to Spotify's public embed page.
-    # Set OFFLINEIFY_PASSWORD in the environment to require a shared password.
-    environment:
-      - OFFLINEIFY_PASSWORD=${OFFLINEIFY_PASSWORD:-}
+      # Loopback only: Caddy (same host) reaches it via localhost:8005 and
+      # terminates TLS. Binding 0.0.0.0 would expose the API straight to the
+      # internet on :8005, sending the Basic password in cleartext.
+      - "127.0.0.1:8005:8000"
+    restart: unless-stopped
     volumes:
-      # Keep downloads and the dedupe index across restarts.
       - ./downloads:/app/downloads
       - ./downloaded_songs.json:/app/downloaded_songs.json
+    environment:
+      - PORT=8000
+      # Concurrent playlist jobs. 2 matches this box's core count; each job
+      # still downloads its own tracks sequentially, keeping the per-track
+      # pause that avoids YouTube rate limits.
+      - MAX_CONCURRENT_JOBS=2
+      # Set OFFLINEIFY_PASSWORD to require a shared password for every request.
+      # Leave empty to keep the API open.
+      - OFFLINEIFY_PASSWORD=${OFFLINEIFY_PASSWORD:-}

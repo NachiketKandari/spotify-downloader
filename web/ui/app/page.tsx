@@ -163,7 +163,13 @@ export default function Home() {
 
             {/* Content */}
             <div className="max-w-page mx-auto px-4 md:px-8 py-8 md:py-10">
-                {view === 'home' && <HomeView />}
+                {view === 'home' && (
+                    <HomeView
+                        onLogin={() => (session ? setView('playlists') : signIn('spotify'))}
+                        onGoLink={() => setView('link')}
+                        onGoCsv={() => setView('csv')}
+                    />
+                )}
 
                 {view === 'playlists' && session && (
                     <Dashboard
@@ -181,7 +187,15 @@ export default function Home() {
     )
 }
 
-function HomeView() {
+function HomeView({
+    onLogin,
+    onGoLink,
+    onGoCsv,
+}: {
+    onLogin: () => void
+    onGoLink: () => void
+    onGoCsv: () => void
+}) {
     return (
         <div className="flex flex-col items-center justify-center text-center py-12 md:py-20 space-y-8">
             <div className="relative w-28 h-28">
@@ -202,14 +216,17 @@ function HomeView() {
                 <MethodCard
                     title="Log in with Spotify"
                     description="See all your playlists, including Liked Songs and private ones. Pick tracks individually."
+                    onClick={onLogin}
                 />
                 <MethodCard
                     title="Paste a link"
                     description="Have a playlist URL? Paste it and download the whole thing as a ZIP. No login needed."
+                    onClick={onGoLink}
                 />
                 <MethodCard
                     title="Upload a CSV"
                     description="Exported your playlist elsewhere? Drop the CSV in and download it."
+                    onClick={onGoCsv}
                 />
             </div>
 
@@ -222,12 +239,27 @@ function HomeView() {
     )
 }
 
-function MethodCard({ title, description }: { title: string, description: string }) {
+function MethodCard({
+    title,
+    description,
+    onClick,
+}: {
+    title: string
+    description: string
+    onClick: () => void
+}) {
+    // A real <button>, so the card is reachable by keyboard and responds to
+    // Enter/Space for free. Title/body are <span>s rather than <h3>/<p> because
+    // a button may only contain phrasing content.
     return (
-        <div className="bg-surface-raised border border-line/70 rounded-card p-6 text-left space-y-2 transition-colors hover:bg-surface-overlay">
-            <h3 className="font-bold text-content">{title}</h3>
-            <p className="text-content-muted text-sm">{description}</p>
-        </div>
+        <button
+            type="button"
+            onClick={onClick}
+            className="w-full text-left bg-surface-raised border border-line/70 rounded-card p-6 transition-colors hover:bg-surface-overlay hover:border-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        >
+            <span className="block font-bold text-content">{title}</span>
+            <span className="block text-content-muted text-sm mt-2">{description}</span>
+        </button>
     )
 }
 
