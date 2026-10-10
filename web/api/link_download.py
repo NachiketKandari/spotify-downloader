@@ -9,7 +9,9 @@ Two sources, in order:
 App-only (client credentials) access is deliberately not used: Spotify blocks
 playlist endpoints for that grant type on most apps.
 
-Once the tracks are known, `run_link_job` hands each one to `matcher.py`.
+`preview_playlist` resolves metadata only; `run_link_job` then downloads what
+it is given: either a set of preview-track URIs or, without a preview, the
+whole playlist.
 """
 
 import html as html_module
@@ -18,7 +20,8 @@ import os
 import random
 import re
 import time
-from typing import List, Optional, Tuple
+import uuid
+from typing import Dict, List, Optional, Tuple
 
 import requests
 from spotipy import Spotify
@@ -34,6 +37,11 @@ PLAYLIST_URL_RE = re.compile(
 
 SPOTIFY_PAGE_LIMIT = 100
 EMBED_TRACK_LIMIT = 50  # Spotify's embed page shows at most this many tracks
+
+# Resolved playlists held between "preview" and "download selected".
+# Small in-memory cache; a personal local app does not need more.
+PREVIEW_CACHE: Dict[str, Dict] = {}
+PREVIEW_CACHE_LIMIT = 20
 
 BROWSER_HEADERS = {
     "User-Agent": (
@@ -186,11 +194,62 @@ def resolve_playlist(url: str, user_token: Optional[str] = None) -> Tuple[str, L
 
 
 # ---------------------------------------------------------------------------
+# Preview: resolve only, so the UI can show tracks before anything downloads
+# ---------------------------------------------------------------------------
+
+def track_to_payload(index: int, query: TrackQuery) -> Dict:
+    """What the frontend needs to render one selectable track."""
+    return {
+        "index": index,
+        "name": query.name,
+        "artist": query.artist,
+        "duration_ms": query.duration_ms,
+        "explicit": query.explicit,
+    }
+
+
+def preview_playlist(url: str, user_token: Optional[str] = None) -> Dict:
+    """
+    Resolve a playlist and return a preview payload:
+    {preview_token, playlist_name, tracks: [...], warning}
+
+    The resolved tracks are cached under preview_token so the download step
+    can reuse them without hitting Spotify again.
+    """
+    playlist_name, tracks, warning = resolve_playlist(url, user_token=user_token)
+
+    preview_token = uuid.uuid4().hex
+    if len(PREVIEW_CACHE) >= PREVIEW_CACHE_LIMIT:
+        PREVIEW_CACHE.pop(next(iter(PREVIEW_CACHE)))
+    PREVIEW_CACHE[preview_token] = {"name": playlist_name, "tracks": tracks, "warning": warning}
+
+    return {
+        "preview_token": preview_token,
+        "playlist_name": playlist_name,
+        "tracks": [track_to_payload(i, t) for i, t in enumerate(tracks)],
+        "warning": warning,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Background job
 # ---------------------------------------------------------------------------
 
-def run_link_job(state, user_id: str, url: str, quality: str, user_token: Optional[str] = None):
-    """Background job: resolve the playlist, then match + download each track."""
+def run_link_job(
+    state,
+    user_id: str,
+    url: str,
+    quality: str,
+    user_token: Optional[str] = None,
+    preview_token: Optional[str] = None,
+    selected_indexes: Optional[List[int]] = None,
+):
+    """
+    Background job: get the track list, then match + download each selected track.
+
+    With a preview_token the already-resolved tracks are reused and
+    selected_indexes picks a subset; otherwise the whole playlist is downloaded.
+    """
     state.status = "working"
     state.logs = []
     state.completed_files = []
@@ -202,13 +261,21 @@ def run_link_job(state, user_id: str, url: str, quality: str, user_token: Option
 
     safe_user_id = "".join([c for c in user_id if c.isalnum() or c in ["@", ".", "-", "_"]])
 
-    try:
-        playlist_name, tracks, warning = resolve_playlist(url, user_token=user_token)
-    except Exception as e:
-        state.logs.append(f"Could not read playlist: {e}")
-        state.status = "error"
-        state.current_track = ""
-        return
+    if preview_token and preview_token in PREVIEW_CACHE:
+        preview = PREVIEW_CACHE[preview_token]
+        playlist_name, warning = preview["name"], preview["warning"]
+        tracks = preview["tracks"]
+        if selected_indexes is not None:
+            wanted = set(selected_indexes)
+            tracks = [t for i, t in enumerate(tracks) if i in wanted]
+    else:
+        try:
+            playlist_name, tracks, warning = resolve_playlist(url, user_token=user_token)
+        except Exception as e:
+            state.logs.append(f"Could not read playlist: {e}")
+            state.status = "error"
+            state.current_track = ""
+            return
 
     if warning:
         state.logs.append(f"Note: {warning}")

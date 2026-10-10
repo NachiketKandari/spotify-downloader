@@ -12,7 +12,7 @@ import zipfile
 import pandas as pd
 from starlette.background import BackgroundTask
 from .downloader import process_track
-from .link_download import is_playlist_url, run_link_job, safe_name
+from .link_download import is_playlist_url, preview_playlist, run_link_job, safe_name
 
 app = FastAPI()
 
@@ -386,22 +386,49 @@ async def csv_download(file: UploadFile, background_tasks: BackgroundTasks, qual
         raise HTTPException(status_code=400, detail=f"CSV parsing error: {str(e)}")
 
 class LinkDownloadRequest(BaseModel):
-    url: str
+    url: Optional[str] = None
     quality: str = "320"
     spotify_user_token: Optional[str] = None  # sent by the UI when logged in
+    preview_token: Optional[str] = None       # from /api/link-preview
+    selected_indexes: Optional[List[int]] = None  # subset of preview tracks
+
+class PlaylistPreviewRequest(BaseModel):
+    url: str
+    spotify_user_token: Optional[str] = None
+
+@app.post("/api/link-preview")
+def link_preview(request: PlaylistPreviewRequest):
+    """Resolve a playlist link and return its tracks for selection (no downloads)."""
+    if not is_playlist_url(request.url):
+        raise HTTPException(status_code=400, detail="Please paste a valid Spotify playlist link")
+    try:
+        return preview_playlist(request.url, user_token=request.spotify_user_token)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read playlist: {e}")
 
 @app.post("/api/link-download")
 def start_link_download(request: LinkDownloadRequest, background_tasks: BackgroundTasks, user_id: str = Query(...)):
     """Start a download from a pasted Spotify playlist link (no login required)"""
-    if not is_playlist_url(request.url):
+    if request.url is None and request.preview_token is None:
+        raise HTTPException(status_code=400, detail="Provide a playlist link or preview token")
+    if request.url is not None and not is_playlist_url(request.url):
         raise HTTPException(status_code=400, detail="Please paste a valid Spotify playlist link")
+    if request.selected_indexes is not None and not request.selected_indexes:
+        raise HTTPException(status_code=400, detail="Select at least one track to download")
 
     state = get_job_state(user_id)
     if state.status == "working":
         return {"message": "Job already in progress", "status": "working"}
 
     background_tasks.add_task(
-        run_link_job, state, user_id, request.url, request.quality, request.spotify_user_token
+        run_link_job,
+        state,
+        user_id,
+        request.url or "",
+        request.quality,
+        request.spotify_user_token,
+        request.preview_token,
+        request.selected_indexes,
     )
     return {"message": "Playlist download started", "status": "starting"}
 

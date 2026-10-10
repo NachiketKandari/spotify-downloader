@@ -1,7 +1,12 @@
 'use client'
 import { useState } from 'react'
-import { Upload, Download, Loader2, CheckCircle, X, Music } from 'lucide-react'
+import { Upload, Download, X } from 'lucide-react'
 import { motion } from 'framer-motion'
+import Button from './ui/Button'
+import Card from './ui/Card'
+import { Field, Select } from './ui/Field'
+import StatusPanel from './ui/StatusPanel'
+import OutcomePanel from './ui/OutcomePanel'
 
 interface CSVUploadProps {
     apiBase: string
@@ -40,13 +45,18 @@ export default function CSVUpload({ apiBase }: CSVUploadProps) {
                 body: formData
             })
 
-            const data = await response.json()
-            console.log('Upload response:', data)
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}))
+                setStatus({ status: 'error', logs: [data.detail || 'CSV upload failed'] })
+                setUploading(false)
+                setDownloading(false)
+                return
+            }
 
-            // Start polling for status
             pollStatus()
         } catch (e) {
             console.error('Upload error:', e)
+            setStatus({ status: 'error', logs: ['Backend unreachable'] })
             setUploading(false)
             setDownloading(false)
         } finally {
@@ -61,7 +71,7 @@ export default function CSVUpload({ apiBase }: CSVUploadProps) {
                 const data = await res.json()
                 setStatus(data)
 
-                if (data.status === 'done' || data.status === 'cancelled' || data.status === 'idle') {
+                if (data.status === 'done' || data.status === 'cancelled' || data.status === 'error') {
                     clearInterval(interval)
                     setDownloading(false)
                 }
@@ -79,16 +89,19 @@ export default function CSVUpload({ apiBase }: CSVUploadProps) {
         }
     }
 
+    const saveUrl = (f: { name: string, path: string }) =>
+        `${apiBase}/api/file?path=${encodeURIComponent(f.path)}&user_id=${userId}`
+
     return (
         <div className="w-full max-w-2xl mx-auto space-y-8">
-            {/* File Upload Section */}
-            <div className="bg-neutral-800 border-2 border-dashed border-neutral-600 rounded-2xl p-8">
+            {/* File picker */}
+            <Card padding="lg" className="border-dashed border-line-strong">
                 <div className="text-center space-y-4">
-                    <Upload className="mx-auto text-neutral-400" size={48} />
+                    <Upload className="mx-auto text-content-faint" size={48} />
                     <div>
-                        <h3 className="text-xl font-bold text-white mb-2">Upload Spotify CSV</h3>
-                        <p className="text-neutral-400 text-sm">
-                            Export your playlist from Spotify and upload the CSV file here
+                        <h3 className="text-xl font-bold text-content mb-2">Upload Spotify CSV</h3>
+                        <p className="text-content-muted text-sm">
+                            Export your playlist as CSV and upload the file here
                         </p>
                     </div>
 
@@ -103,169 +116,86 @@ export default function CSVUpload({ apiBase }: CSVUploadProps) {
 
                     <label
                         htmlFor="csv-upload"
-                        className="inline-block bg-neutral-700 hover:bg-neutral-600 text-white px-6 py-3 rounded-lg font-medium cursor-pointer transition disabled:opacity-50"
+                        className="inline-block bg-surface-input hover:bg-surface-overlay text-content px-6 py-3 rounded-full font-bold cursor-pointer transition-colors"
                     >
                         {file ? file.name : 'Choose CSV File'}
                     </label>
 
                     {file && (
-                        <div className="flex items-center justify-center gap-4 pt-4">
-                            <div>
-                                <label className="text-neutral-400 text-sm mr-2">Quality:</label>
-                                <select
-                                    value={quality}
-                                    onChange={(e) => setQuality(e.target.value)}
-                                    className="bg-neutral-900 text-white rounded px-3 py-2 border border-neutral-700 focus:border-green-500 outline-none"
-                                    disabled={downloading}
-                                >
+                        <div className="flex justify-center pt-2">
+                            <Field label="Quality:">
+                                <Select value={quality} onChange={(e) => setQuality(e.target.value)} disabled={downloading}>
                                     <option value="320">High (320kbps)</option>
                                     <option value="192">Standard (192kbps)</option>
-                                </select>
-                            </div>
+                                </Select>
+                            </Field>
                         </div>
                     )}
                 </div>
-            </div>
+            </Card>
 
-            {/* Action Buttons */}
-            {file && !downloading && (
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="flex gap-4"
-                >
-                    <button
+            {/* Start / clear */}
+            {file && !downloading && status?.status !== 'done' && status?.status !== 'cancelled' && status?.status !== 'error' && (
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex gap-4">
+                    <Button
+                        variant="primary"
+                        size="lg"
+                        loading={uploading}
+                        icon={<Download />}
                         onClick={handleUpload}
-                        disabled={uploading || downloading}
-                        className="flex-1 bg-green-500 text-black px-8 py-4 rounded-xl font-bold text-lg hover:bg-green-400 transition disabled:opacity-50 flex items-center justify-center gap-2"
+                        className="flex-1"
                     >
-                        {uploading ? <Loader2 className="animate-spin" /> : <Download />}
                         {uploading ? 'Starting...' : 'Start Download'}
-                    </button>
-                    <button
-                        onClick={() => setFile(null)}
-                        className="px-6 py-4 bg-neutral-700 text-white rounded-xl font-medium hover:bg-neutral-600 transition"
-                    >
-                        <X />
-                    </button>
+                    </Button>
+                    <Button variant="secondary" size="lg" onClick={() => setFile(null)} icon={<X />} aria-label="Clear file" />
                 </motion.div>
             )}
 
-            {/* Download Status */}
+            {/* Progress */}
             {downloading && status && (
-                <div className="bg-black border border-neutral-800 rounded-2xl p-6 font-mono text-sm">
-                    <div className="flex justify-between items-center text-neutral-400 mb-4 border-b border-neutral-800 pb-2">
-                        <span>STATUS: {status.status?.toUpperCase()}</span>
-                        <span>{status.completed}/{status.total}</span>
-                    </div>
-
-                    {status.current_track && (
-                        <div className="text-green-500 animate-pulse mb-4">
-                            &gt; Processing: {status.current_track}
-                        </div>
-                    )}
-
-                    <div className="flex gap-3 mb-4">
-                        <button
-                            onClick={handleCancel}
-                            disabled={status.status === 'cancelled' || status.status === 'done'}
-                            className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded font-bold disabled:opacity-50 disabled:cursor-not-allowed transition"
-                        >
-                            Stop Download
-                        </button>
-                    </div>
-
-                    {/* Completed Files */}
-                    {status.completed_files && status.completed_files.length > 0 && (
-                        <div className="mt-6 border-t border-neutral-800 pt-4">
-                            <h4 className="text-white font-bold mb-3 flex items-center gap-2">
-                                <CheckCircle size={16} className="text-green-500" />
-                                Ready to Download ({status.completed_files.length})
-                            </h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-64 overflow-y-auto">
-                                {status.completed_files.map((file: any, i: number) => (
-                                    <div key={i} className="flex justify-between items-center bg-neutral-900 p-2 rounded border border-neutral-800">
-                                        <span className="text-neutral-300 truncate text-xs mr-2">{file.name}</span>
-                                        <a
-                                            href={`${apiBase}/api/file?path=${encodeURIComponent(file.path)}&user_id=${userId}`}
-                                            target="_blank"
-                                            className="bg-green-600 hover:bg-green-500 text-white text-xs px-3 py-1 rounded flex items-center gap-1 transition"
-                                            download
-                                        >
-                                            <Download size={12} /> Save
-                                        </a>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Download All as ZIP */}
-                    {status.status === 'done' && status.completed_files?.length > 0 && (
-                        <div className="mt-4">
-                            <button
-                                onClick={() => window.open(`${apiBase}/api/zip?user_id=${userId}`, '_blank')}
-                                className="w-full bg-green-500 text-black font-bold py-3 px-6 rounded-xl hover:bg-green-400 transition flex items-center justify-center gap-2"
-                            >
-                                <Download size={20} /> Download All as ZIP
-                            </button>
-                        </div>
-                    )}
-                </div>
+                <StatusPanel
+                    status={status}
+                    onCancel={handleCancel}
+                    onZip={() => window.open(`${apiBase}/api/zip?user_id=${userId}`, '_blank')}
+                    zipLabel="Download All as ZIP"
+                    saveUrl={saveUrl}
+                />
             )}
 
-            {/* Success State */}
+            {/* Error */}
+            {status?.status === 'error' && !downloading && (
+                <OutcomePanel
+                    tone="danger"
+                    title="Could Not Start"
+                    body={status.logs?.[0] || 'Something went wrong'}
+                    actionLabel="Try Again"
+                    onAction={() => { setStatus(null); setFile(null) }}
+                />
+            )}
+
+            {/* Success */}
             {status?.status === 'done' && !downloading && (
-                <motion.div
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="bg-green-900/20 border border-green-700 rounded-2xl p-6 text-center"
-                >
-                    <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
-                    <h3 className="text-2xl font-bold text-white mb-2">Download Complete!</h3>
-                    <p className="text-neutral-400 mb-4">All {status.completed} tracks downloaded successfully</p>
-                    <button
-                        onClick={() => {
-                            setFile(null)
-                            setStatus(null)
-                        }}
-                        className="bg-white text-black px-6 py-2 rounded-full font-bold hover:scale-105 transition"
-                    >
-                        Upload Another CSV
-                    </button>
-                </motion.div>
+                <OutcomePanel
+                    tone="success"
+                    title="Download Complete!"
+                    body={`${status.completed_files?.length || 0} of ${status.total} tracks downloaded`}
+                    actionLabel="Upload Another CSV"
+                    onAction={() => { setFile(null); setStatus(null) }}
+                    zipUrl={status.completed_files?.length > 0 ? `${apiBase}/api/zip?user_id=${userId}` : undefined}
+                />
             )}
 
-            {/* Cancelled State */}
+            {/* Cancelled */}
             {status?.status === 'cancelled' && !downloading && (
-                <motion.div
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="bg-yellow-900/20 border border-yellow-700 rounded-2xl p-6 text-center"
-                >
-                    <Music className="w-16 h-16 text-yellow-500 mx-auto mb-4" />
-                    <h3 className="text-2xl font-bold text-white mb-2">Download Stopped</h3>
-                    <p className="text-neutral-400 mb-4">
-                        Downloaded {status.completed} of {status.total} tracks before stopping
-                    </p>
-                    <div className="flex gap-3 justify-center">
-                        <button
-                            onClick={() => window.open(`${apiBase}/api/zip?user_id=${userId}`, '_blank')}
-                            className="bg-green-500 text-black px-6 py-2 rounded-full font-bold hover:scale-105 transition"
-                        >
-                            Download Completed Files
-                        </button>
-                        <button
-                            onClick={() => {
-                                setFile(null)
-                                setStatus(null)
-                            }}
-                            className="bg-neutral-700 text-white px-6 py-2 rounded-full font-bold hover:bg-neutral-600 transition"
-                        >
-                            Start New
-                        </button>
-                    </div>
-                </motion.div>
+                <OutcomePanel
+                    tone="warning"
+                    title="Download Stopped"
+                    body={`Downloaded ${status.completed_files?.length || 0} of ${status.total} tracks before stopping`}
+                    actionLabel="Start New"
+                    onAction={() => { setFile(null); setStatus(null) }}
+                    zipUrl={status.completed_files?.length > 0 ? `${apiBase}/api/zip?user_id=${userId}` : undefined}
+                    zipLabel="Download Completed Files"
+                />
             )}
         </div>
     )

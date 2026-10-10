@@ -1,49 +1,120 @@
 'use client'
 import { useState } from 'react'
-import { Link2, Download, Loader2, CheckCircle, X, Music } from 'lucide-react'
+import { Link2, Download, X, Loader2, CheckCircle, ListMusic, AlertTriangle } from 'lucide-react'
 import { motion } from 'framer-motion'
+import Button from './ui/Button'
+import Card from './ui/Card'
+import { Input, Field, Select } from './ui/Field'
+import StatusPanel from './ui/StatusPanel'
+import OutcomePanel from './ui/OutcomePanel'
+
+interface PreviewTrack {
+    index: number
+    name: string
+    artist: string
+    duration_ms?: number
+    explicit?: boolean
+}
+
+interface Preview {
+    preview_token: string
+    playlist_name: string
+    tracks: PreviewTrack[]
+    warning?: string | null
+}
 
 interface LinkDownloadProps {
     apiBase: string
     accessToken?: string
 }
 
+/** "4:32" from milliseconds. */
+const formatDuration = (ms?: number) => {
+    if (!ms) return ''
+    const total = Math.round(ms / 1000)
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+
 export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps) {
     const [url, setUrl] = useState('')
     const [quality, setQuality] = useState('320')
+    const [userId] = useState(() => `link_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`)
+
+    // Phase 1: preview; phase 2: selection + download; then job status.
+    const [preview, setPreview] = useState<Preview | null>(null)
+    const [selected, setSelected] = useState<Set<number>>(new Set())
+    const [loadingPreview, setLoadingPreview] = useState(false)
+    const [previewError, setPreviewError] = useState('')
+
     const [starting, setStarting] = useState(false)
     const [downloading, setDownloading] = useState(false)
     const [status, setStatus] = useState<any>(null)
-    // Unique session id: files land in downloads/<userId>/<playlist>/
-    const [userId] = useState(() => `link_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`)
 
-    const handleStart = async () => {
+    const loadPreview = async () => {
         if (!url.trim()) return
+        setLoadingPreview(true)
+        setPreviewError('')
+        setPreview(null)
 
+        try {
+            const res = await fetch(`${apiBase}/api/link-preview`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: url.trim(), spotify_user_token: accessToken || null })
+            })
+            const data = await res.json()
+            if (!res.ok) {
+                setPreviewError(data.detail || 'Could not read this playlist')
+                return
+            }
+            setPreview(data)
+            setSelected(new Set(data.tracks.map((t: PreviewTrack) => t.index)))
+        } catch (e) {
+            console.error('Preview error:', e)
+            setPreviewError('Backend unreachable')
+        } finally {
+            setLoadingPreview(false)
+        }
+    }
+
+    const toggleTrack = (index: number) => {
+        setSelected(current => {
+            const next = new Set(current)
+            if (next.has(index)) next.delete(index)
+            else next.add(index)
+            return next
+        })
+    }
+
+    const allSelected = preview ? selected.size === preview.tracks.length : false
+    const toggleAll = () => {
+        if (!preview) return
+        setSelected(allSelected ? new Set() : new Set(preview.tracks.map(t => t.index)))
+    }
+
+    const startDownload = async () => {
+        if (!preview || selected.size === 0) return
         setStarting(true)
         setDownloading(true)
         setStatus({ status: 'starting', logs: [] })
 
         try {
-            const response = await fetch(`${apiBase}/api/link-download?user_id=${encodeURIComponent(userId)}`, {
+            const res = await fetch(`${apiBase}/api/link-download?user_id=${encodeURIComponent(userId)}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    url: url.trim(),
+                    preview_token: preview.preview_token,
+                    selected_indexes: Array.from(selected).sort((a, b) => a - b),
                     quality,
-                    // When logged in, the backend uses this to read the full playlist list.
-                    spotify_user_token: accessToken || null
                 })
             })
-
-            const data = await response.json()
-            if (!response.ok) {
+            const data = await res.json()
+            if (!res.ok) {
                 setStatus({ status: 'error', logs: [data.detail || 'Could not start download'] })
                 setStarting(false)
                 setDownloading(false)
                 return
             }
-
             pollStatus()
         } catch (e) {
             console.error('Start error:', e)
@@ -80,212 +151,211 @@ export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps
         }
     }
 
+    const reset = () => {
+        setPreview(null)
+        setStatus(null)
+        setSelected(new Set())
+        setUrl('')
+        setPreviewError('')
+    }
+
+    const saveUrl = (file: { name: string, path: string }) =>
+        `${apiBase}/api/file?path=${encodeURIComponent(file.path)}&user_id=${encodeURIComponent(userId)}`
+
+    const zipUrl = () =>
+        `${apiBase}/api/playlist-zip?user_id=${encodeURIComponent(userId)}&playlist=${encodeURIComponent(status?.playlist_dir || '')}`
+
+    // ---- Render -----------------------------------------------------------
+
+    // Job running / finished
+    if (downloading && status) {
+        return (
+            <div className="w-full max-w-2xl mx-auto">
+                <StatusPanel
+                    status={status}
+                    onCancel={handleCancel}
+                    onZip={zipUrl}
+                    zipLabel="Download Playlist as ZIP"
+                    saveUrl={saveUrl}
+                />
+            </div>
+        )
+    }
+
+    if (status?.status === 'done' || status?.status === 'cancelled' || status?.status === 'error') {
+        const zipAvailable = status.completed_files?.length > 0 && status.playlist_dir
+        return (
+            <div className="w-full max-w-2xl mx-auto">
+                {status.status === 'done' && (
+                    <OutcomePanel
+                        tone="success"
+                        title="Download Complete!"
+                        body={`${status.completed_files?.length || 0} of ${status.total} tracks downloaded`}
+                        actionLabel="Download Another"
+                        onAction={reset}
+                        zipUrl={zipAvailable ? zipUrl() : undefined}
+                        zipLabel="Download Playlist as ZIP"
+                    />
+                )}
+                {status.status === 'cancelled' && (
+                    <OutcomePanel
+                        tone="warning"
+                        title="Download Stopped"
+                        body={`Downloaded ${status.completed_files?.length || 0} of ${status.total} tracks before stopping`}
+                        actionLabel="Start New"
+                        onAction={reset}
+                        zipUrl={zipAvailable ? zipUrl() : undefined}
+                        zipLabel="Download Completed Files"
+                    />
+                )}
+                {status.status === 'error' && (
+                    <OutcomePanel
+                        tone="danger"
+                        title="Could Not Start"
+                        body={status.logs?.[0] || 'Something went wrong'}
+                        actionLabel="Try Again"
+                        onAction={reset}
+                    />
+                )}
+            </div>
+        )
+    }
+
+    // Track selection
+    if (preview) {
+        return (
+            <div className="w-full max-w-2xl mx-auto space-y-6">
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+                    <Card padding="none" className="overflow-hidden">
+                        {/* Playlist header */}
+                        <div className="p-5 border-b border-line/70 flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-md bg-surface-overlay flex items-center justify-center shrink-0">
+                                <ListMusic className="text-accent" size={22} />
+                            </div>
+                            <div className="min-w-0">
+                                <h3 className="font-bold text-content truncate">{preview.playlist_name}</h3>
+                                <p className="text-content-muted text-sm">
+                                    {selected.size} of {preview.tracks.length} selected
+                                </p>
+                            </div>
+                            <button
+                                onClick={reset}
+                                className="ml-auto text-content-muted hover:text-content transition-colors shrink-0"
+                                aria-label="Back"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        {/* Limit / truncation note */}
+                        {preview.warning && (
+                            <div className="px-5 py-3 bg-warning-faint border-b border-line/70 text-warning text-xs flex items-center gap-2">
+                                <AlertTriangle size={14} className="shrink-0" />
+                                {preview.warning}
+                            </div>
+                        )}
+
+                        {/* Track list */}
+                        <div className="max-h-[26rem] overflow-y-auto">
+                            {preview.tracks.map((track, i) => {
+                                const isSelected = selected.has(track.index)
+                                return (
+                                    <button
+                                        key={track.index}
+                                        onClick={() => toggleTrack(track.index)}
+                                        className={`w-full flex items-center gap-3 px-5 py-2.5 text-left transition-colors hover:bg-surface-overlay ${isSelected ? '' : 'opacity-50'}`}
+                                    >
+                                        <span className={`w-5 h-5 rounded-sm border flex items-center justify-center shrink-0 transition-colors ${isSelected ? 'bg-accent border-accent text-black' : 'border-content-faint'}`}>
+                                            {isSelected && <CheckCircle size={13} />}
+                                        </span>
+                                        <span className="w-6 text-content-faint text-xs text-right shrink-0">{i + 1}</span>
+                                        <span className="min-w-0 flex-1">
+                                            <span className="block text-sm text-content truncate">
+                                                {track.name}
+                                                {track.explicit && <span className="ml-2 text-[10px] bg-surface-overlay text-content-faint px-1 py-0.5 rounded align-middle">E</span>}
+                                            </span>
+                                            <span className="block text-xs text-content-muted truncate">{track.artist}</span>
+                                        </span>
+                                        <span className="text-content-faint text-xs shrink-0">{formatDuration(track.duration_ms)}</span>
+                                    </button>
+                                )
+                            })}
+                        </div>
+
+                        {/* Footer actions */}
+                        <div className="p-4 border-t border-line/70 flex flex-wrap items-center gap-3">
+                            <Button variant="secondary" size="sm" onClick={toggleAll}>
+                                {allSelected ? 'Clear All' : 'Select All'}
+                            </Button>
+                            <Field label="Quality:">
+                                <Select value={quality} onChange={(e) => setQuality(e.target.value)} className="w-auto">
+                                    <option value="320">High (320kbps)</option>
+                                    <option value="192">Standard (192kbps)</option>
+                                </Select>
+                            </Field>
+                            <Button
+                                variant="primary"
+                                size="md"
+                                loading={starting}
+                                icon={<Download size={16} />}
+                                disabled={selected.size === 0}
+                                onClick={startDownload}
+                                className="ml-auto"
+                            >
+                                {starting ? 'Starting...' : `Download ${selected.size} Track${selected.size === 1 ? '' : 's'}`}
+                            </Button>
+                        </div>
+                    </Card>
+                </motion.div>
+            </div>
+        )
+    }
+
+    // URL input (first screen)
     return (
         <div className="w-full max-w-2xl mx-auto space-y-8">
-            {/* Link Input Section */}
-            <div className="bg-neutral-800 border-2 border-dashed border-neutral-600 rounded-2xl p-8">
+            <Card padding="lg" className="border-dashed border-line-strong">
                 <div className="text-center space-y-4">
-                    <Link2 className="mx-auto text-neutral-400" size={48} />
+                    <Link2 className="mx-auto text-content-faint" size={48} />
                     <div>
-                        <h3 className="text-xl font-bold text-white mb-2">Paste a Playlist Link</h3>
-                        <p className="text-neutral-400 text-sm">
-                            Copy any public Spotify playlist link and paste it here. No login needed.
-                            {!accessToken && ' Without login, Spotify shares the first 50 tracks; log in for full playlists.'}
-                            {accessToken && ' Logged in: full playlists, including your own private ones.'}
+                        <h3 className="text-xl font-bold text-content mb-2">Paste a Playlist Link</h3>
+                        <p className="text-content-muted text-sm">
+                            Copy any public Spotify playlist link and inspect the tracks before downloading.
+                            {!accessToken && ' Without login, Spotify shares the first 50 tracks.'}
                         </p>
                     </div>
 
-                    <input
+                    <Input
                         type="text"
                         value={url}
                         onChange={(e) => setUrl(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') loadPreview() }}
                         placeholder="https://open.spotify.com/playlist/..."
-                        disabled={downloading}
-                        className="w-full bg-neutral-900 text-white rounded-lg px-4 py-3 border border-neutral-700 focus:border-green-500 outline-none placeholder:text-neutral-600"
+                        disabled={loadingPreview}
                     />
 
-                    <div className="flex items-center justify-center gap-4">
-                        <div>
-                            <label className="text-neutral-400 text-sm mr-2">Quality:</label>
-                            <select
-                                value={quality}
-                                onChange={(e) => setQuality(e.target.value)}
-                                className="bg-neutral-900 text-white rounded px-3 py-2 border border-neutral-700 focus:border-green-500 outline-none"
-                                disabled={downloading}
-                            >
-                                <option value="320">High (320kbps)</option>
-                                <option value="192">Standard (192kbps)</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Action Buttons */}
-            {url.trim() && !downloading && (
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="flex gap-4"
-                >
-                    <button
-                        onClick={handleStart}
-                        disabled={starting || downloading}
-                        className="flex-1 bg-green-500 text-black px-8 py-4 rounded-xl font-bold text-lg hover:bg-green-400 transition disabled:opacity-50 flex items-center justify-center gap-2"
-                    >
-                        {starting ? <Loader2 className="animate-spin" /> : <Download />}
-                        {starting ? 'Starting...' : 'Download Playlist'}
-                    </button>
-                    <button
-                        onClick={() => setUrl('')}
-                        className="px-6 py-4 bg-neutral-700 text-white rounded-xl font-medium hover:bg-neutral-600 transition"
-                    >
-                        <X />
-                    </button>
-                </motion.div>
-            )}
-
-            {/* Download Status */}
-            {downloading && status && (
-                <div className="bg-black border border-neutral-800 rounded-2xl p-6 font-mono text-sm">
-                    <div className="flex justify-between items-center text-neutral-400 mb-4 border-b border-neutral-800 pb-2">
-                        <span>STATUS: {status.status?.toUpperCase()}</span>
-                        <span>{status.completed}/{status.total}</span>
-                    </div>
-
-                    {status.current_track && (
-                        <div className="text-green-500 animate-pulse mb-4">
-                            &gt; Processing: {status.current_track}
-                        </div>
-                    )}
-
-                    <div className="flex gap-3 mb-4">
-                        <button
-                            onClick={handleCancel}
-                            disabled={status.status === 'cancelled' || status.status === 'done'}
-                            className="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded font-bold disabled:opacity-50 disabled:cursor-not-allowed transition"
-                        >
-                            Stop Download
-                        </button>
-                    </div>
-
-                    {/* Completed Files */}
-                    {status.completed_files && status.completed_files.length > 0 && (
-                        <div className="mt-6 border-t border-neutral-800 pt-4">
-                            <h4 className="text-white font-bold mb-3 flex items-center gap-2">
-                                <CheckCircle size={16} className="text-green-500" />
-                                Ready to Download ({status.completed_files.length})
-                            </h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-64 overflow-y-auto">
-                                {status.completed_files.map((file: any, i: number) => (
-                                    <div key={i} className="flex justify-between items-center bg-neutral-900 p-2 rounded border border-neutral-800">
-                                        <span className="text-neutral-300 truncate text-xs mr-2">{file.name}</span>
-                                        <a
-                                            href={`${apiBase}/api/file?path=${encodeURIComponent(file.path)}&user_id=${encodeURIComponent(userId)}`}
-                                            target="_blank"
-                                            className="bg-green-600 hover:bg-green-500 text-white text-xs px-3 py-1 rounded flex items-center gap-1 transition"
-                                            download
-                                        >
-                                            <Download size={12} /> Save
-                                        </a>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Download Playlist as ZIP */}
-                    {status.status === 'done' && status.completed_files?.length > 0 && status.playlist_dir && (
-                        <div className="mt-4">
-                            <button
-                                onClick={() => window.open(`${apiBase}/api/playlist-zip?user_id=${encodeURIComponent(userId)}&playlist=${encodeURIComponent(status.playlist_dir)}`, '_blank')}
-                                className="w-full bg-green-500 text-black font-bold py-3 px-6 rounded-xl hover:bg-green-400 transition flex items-center justify-center gap-2"
-                            >
-                                <Download size={20} /> Download Playlist as ZIP
-                            </button>
-                        </div>
+                    {previewError && (
+                        <p className="text-danger text-sm">{previewError}</p>
                     )}
                 </div>
-            )}
+            </Card>
 
-            {/* Error State */}
-            {status?.status === 'error' && !downloading && (
-                <motion.div
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="bg-red-900/20 border border-red-700 rounded-2xl p-6 text-center"
-                >
-                    <X className="w-16 h-16 text-red-500 mx-auto mb-4" />
-                    <h3 className="text-2xl font-bold text-white mb-2">Could Not Start</h3>
-                    <p className="text-neutral-400 mb-4">{status.logs?.[0] || 'Something went wrong'}</p>
-                    <button
-                        onClick={() => { setStatus(null); setDownloading(false) }}
-                        className="bg-white text-black px-6 py-2 rounded-full font-bold hover:scale-105 transition"
+            {url.trim() && (
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex gap-4">
+                    <Button
+                        variant="primary"
+                        size="lg"
+                        onClick={loadPreview}
+                        disabled={loadingPreview}
+                        className="flex-1"
                     >
-                        Try Again
-                    </button>
-                </motion.div>
-            )}
-
-            {/* Success State */}
-            {status?.status === 'done' && !downloading && (
-                <motion.div
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="bg-green-900/20 border border-green-700 rounded-2xl p-6 text-center"
-                >
-                    <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
-                    <h3 className="text-2xl font-bold text-white mb-2">Download Complete!</h3>
-                    <p className="text-neutral-400 mb-4">
-                        {status.completed_files?.length || 0} of {status.total} tracks downloaded
-                    </p>
-                    <div className="flex gap-3 justify-center">
-                        {status.completed_files?.length > 0 && status.playlist_dir && (
-                            <button
-                                onClick={() => window.open(`${apiBase}/api/playlist-zip?user_id=${encodeURIComponent(userId)}&playlist=${encodeURIComponent(status.playlist_dir)}`, '_blank')}
-                                className="bg-green-500 text-black px-6 py-2 rounded-full font-bold hover:scale-105 transition"
-                            >
-                                Download as ZIP
-                            </button>
+                        {loadingPreview ? (
+                            <><Loader2 className="animate-spin" size={18} /> Reading playlist...</>
+                        ) : (
+                            <><ListMusic size={18} /> Preview Tracks</>
                         )}
-                        <button
-                            onClick={() => { setStatus(null); setUrl('') }}
-                            className="bg-neutral-700 text-white px-6 py-2 rounded-full font-bold hover:bg-neutral-600 transition"
-                        >
-                            Download Another
-                        </button>
-                    </div>
-                </motion.div>
-            )}
-
-            {/* Cancelled State */}
-            {status?.status === 'cancelled' && !downloading && (
-                <motion.div
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="bg-yellow-900/20 border border-yellow-700 rounded-2xl p-6 text-center"
-                >
-                    <Music className="w-16 h-16 text-yellow-500 mx-auto mb-4" />
-                    <h3 className="text-2xl font-bold text-white mb-2">Download Stopped</h3>
-                    <p className="text-neutral-400 mb-4">
-                        Downloaded {status.completed_files?.length || 0} of {status.total} tracks before stopping
-                    </p>
-                    <div className="flex gap-3 justify-center">
-                        {status.completed_files?.length > 0 && status.playlist_dir && (
-                            <button
-                                onClick={() => window.open(`${apiBase}/api/playlist-zip?user_id=${encodeURIComponent(userId)}&playlist=${encodeURIComponent(status.playlist_dir)}`, '_blank')}
-                                className="bg-green-500 text-black px-6 py-2 rounded-full font-bold hover:scale-105 transition"
-                            >
-                                Download Completed Files
-                            </button>
-                        )}
-                        <button
-                            onClick={() => { setStatus(null); setUrl('') }}
-                            className="bg-neutral-700 text-white px-6 py-2 rounded-full font-bold hover:bg-neutral-600 transition"
-                        >
-                            Start New
-                        </button>
-                    </div>
+                    </Button>
+                    <Button variant="secondary" size="lg" onClick={() => { setUrl(''); setPreviewError('') }} icon={<X />} aria-label="Clear" />
                 </motion.div>
             )}
         </div>

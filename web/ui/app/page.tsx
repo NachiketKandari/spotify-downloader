@@ -1,169 +1,201 @@
 'use client'
+import { useEffect, useState } from 'react'
 import { useSession, signIn, signOut } from "next-auth/react"
-import { ShieldCheck, Music, Download, Upload, Link2 } from "lucide-react"
+import { Home as HomeIcon, ListMusic, Link2, Upload, LogOut, Music, ShieldCheck, Download } from "lucide-react"
 import Image from "next/image"
 import Dashboard from "./components/Dashboard"
 import CSVUpload from "./components/CSVUpload"
 import LinkDownload from "./components/LinkDownload"
 
+type View = 'home' | 'playlists' | 'link' | 'csv'
+
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+
 export default function Home() {
     const { data: session } = useSession()
+    const [view, setView] = useState<View>('home')
 
-    if (session) {
+    // Logging in swaps the "Home" tab for "My Playlists"; logging out resets.
+    useEffect(() => {
+        if (session) setView(current => (current === 'home' ? 'playlists' : current))
+        else setView(current => (current === 'playlists' ? 'home' : current))
+    }, [session])
+
+    const tabs: { id: View, label: string, icon: React.ReactNode }[] = [
+        ...(session
+            ? [{ id: 'playlists' as View, label: 'My Playlists', icon: <ListMusic size={16} /> }]
+            : [{ id: 'home' as View, label: 'Home', icon: <HomeIcon size={16} /> }]),
+        { id: 'link', label: 'Paste Link', icon: <Link2 size={16} /> },
+        { id: 'csv', label: 'Upload CSV', icon: <Upload size={16} /> },
+    ]
+
+    const tabClass = (id: View) =>
+        `flex items-center gap-2 px-3 md:px-4 py-2 rounded-full text-sm font-bold transition-all duration-150 whitespace-nowrap ${
+            view === id
+                ? 'bg-accent text-black'
+                : 'text-content-muted hover:text-content'
+        }`
+
+    const tabLabel = (id: View, label: string) => {
+        const short = id === 'link' ? 'Link' : id === 'csv' ? 'CSV' : id === 'home' ? '' : label
         return (
-            <main className="min-h-screen bg-neutral-900 text-white p-8">
-                <div className="max-w-7xl mx-auto">
-                    <div className="flex justify-between items-center mb-12">
-                        <h1 className="text-3xl font-bold flex items-center gap-3">
-                            <div className="relative w-10 h-10">
-                                <Image
-                                    src="/offlineify-logo.png"
-                                    alt="Offlineify"
-                                    fill
-                                    className="object-contain"
-                                />
-                            </div>
-                            <span>Offline<span className="text-green-500">ify</span></span>
-                        </h1>
-                        <div className="flex items-center gap-4">
-                            <div className="text-neutral-400">Logged in as {session.user?.name || session.user?.email || 'User'}</div>
-                            <button
-                                onClick={() => signOut()}
-                                className="px-4 py-2 bg-neutral-800 rounded-full hover:bg-neutral-700 transition"
-                            >
-                                Logout
-                            </button>
+            <>
+                <span className="hidden md:inline">{label}</span>
+                <span className="md:hidden">{short}</span>
+            </>
+        )
+    }
+
+    return (
+        <main className="min-h-screen bg-surface-base text-content">
+            {/* Navigation */}
+            <nav className="sticky top-0 z-40 bg-surface-base/95 backdrop-blur border-b border-line/70">
+                <div className="max-w-page mx-auto px-4 md:px-8 h-16 flex items-center gap-4">
+                    <button
+                        onClick={() => setView(session ? 'playlists' : 'home')}
+                        className="flex items-center gap-2 shrink-0"
+                    >
+                        <div className="relative w-8 h-8">
+                            <Image src="/offlineify-logo.png" alt="Offlineify" fill className="object-contain" />
                         </div>
+                        <span className="text-xl font-bold hidden sm:block">
+                            Offline<span className="text-accent">ify</span>
+                        </span>
+                    </button>
+
+                    <div className="flex items-center gap-1 md:gap-2 mx-auto">
+                        {tabs.map(tab => (
+                            <button key={tab.id} onClick={() => setView(tab.id)} className={tabClass(tab.id)}>
+                                {tab.icon}
+                                {tabLabel(tab.id, tab.label)}
+                            </button>
+                        ))}
                     </div>
 
+                    <div className="flex items-center gap-3 shrink-0">
+                        {session ? (
+                            <>
+                                <span className="text-content-muted text-sm hidden md:block max-w-[160px] truncate">
+                                    {session.user?.name || session.user?.email || 'User'}
+                                </span>
+                                <button
+                                    onClick={() => signOut()}
+                                    className="flex items-center gap-2 px-3 py-2 rounded-full text-sm font-bold text-content-muted hover:text-content transition-colors"
+                                >
+                                    <LogOut size={16} />
+                                    <span className="hidden md:inline">Logout</span>
+                                </button>
+                            </>
+                        ) : (
+                            <button
+                                onClick={() => signIn("spotify")}
+                                className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-full font-bold text-sm hover:scale-[1.03] transition-transform"
+                            >
+                                <Music size={16} />
+                                Login
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </nav>
+
+            {/* Content */}
+            <div className="max-w-page mx-auto px-4 md:px-8 py-8 md:py-10">
+                {view === 'home' && <HomeView />}
+
+                {view === 'playlists' && session && (
                     <Dashboard
                         accessToken={session.accessToken as string}
                         userEmail={session.user?.email || 'unknown'}
                         authError={(session as any).error}
                     />
+                )}
 
-                    <div className="mt-24 border-t border-neutral-800 pt-16">
-                        <div className="text-center mb-12">
-                            <h2 className="text-3xl font-bold mb-4">Paste a Playlist Link</h2>
-                            <p className="text-neutral-400">
-                                Have a link instead? Paste any playlist (yours, or a public one) and download it as a ZIP.
-                            </p>
-                        </div>
-                        <LinkDownload
-                            apiBase={process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}
-                            accessToken={session.accessToken as string}
-                        />
-                    </div>
-                </div>
-            </main>
-        )
-    }
+                {view === 'link' && <LinkView accessToken={session?.accessToken as string | undefined} />}
 
-    return (
-        <main className="min-h-screen bg-black text-white">
-            {/* Landing Section - Full Screen */}
-            <div className="min-h-screen flex items-center justify-center p-8">
-                <div className="text-center space-y-8 max-w-2xl w-full">
-                    <div className="flex justify-center mb-8">
-                        <div className="relative w-32 h-32">
-                            <Image
-                                src="/offlineify-logo.png"
-                                alt="Offlineify Logo"
-                                fill
-                                className="object-contain"
-                                priority
-                            />
-                        </div>
-                    </div>
-                    <h1 className="text-5xl font-bold tracking-tight">Offline<span className="text-green-500">ify</span></h1>
-                    <p className="text-neutral-400 text-lg">
-                        Export your playlists from Spotify directly to your local storage in high-quality MP3 (320kbps).
-                    </p>
-
-                    {/* Mode Toggle */}
-                    <div className="flex flex-col md:flex-row gap-4 justify-center items-center">
-                        <button
-                            onClick={() => signIn("spotify")}
-                            className="w-full md:w-auto bg-green-500 text-black px-8 py-4 rounded-full font-bold text-lg hover:bg-green-400 transition transform hover:scale-105 flex items-center justify-center gap-3"
-                        >
-                            <Music />
-                            Login with Spotify
-                        </button>
-
-                        <div className="text-neutral-500 flex items-center text-2xl font-bold">OR</div>
-
-                        <button
-                            onClick={() => {
-                                // Scroll to link download section
-                                document.getElementById('link-section')?.scrollIntoView({ behavior: 'smooth' })
-                            }}
-                            className="w-full md:w-auto bg-neutral-800 text-white px-8 py-4 rounded-full font-bold text-lg hover:bg-neutral-700 transition transform hover:scale-105 flex items-center justify-center gap-3 border border-neutral-700"
-                        >
-                            <Link2 />
-                            Paste Playlist Link
-                        </button>
-                    </div>
-
-                    <div className="text-neutral-500 flex items-center gap-4 justify-center text-sm">
-                        <span className="h-px bg-neutral-800 w-16"></span>
-                        OR UPLOAD A CSV
-                        <span className="h-px bg-neutral-800 w-16"></span>
-                    </div>
-
-                    <div className="flex justify-center">
-                        <button
-                            onClick={() => {
-                                // Scroll to CSV upload section
-                                document.getElementById('csv-section')?.scrollIntoView({ behavior: 'smooth' })
-                            }}
-                            className="w-full md:w-auto bg-neutral-800 text-white px-8 py-4 rounded-full font-bold text-lg hover:bg-neutral-700 transition transform hover:scale-105 flex items-center justify-center gap-3 border border-neutral-700"
-                        >
-                            <Upload />
-                            Upload Playlist
-                        </button>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-4 pt-12 text-sm text-neutral-500">
-                        <div className="flex flex-col items-center gap-2">
-                            <ShieldCheck /> Local Privacy
-                        </div>
-                        <div className="flex flex-col items-center gap-2">
-                            <Music /> 320kbps Audio
-                        </div>
-                        <div className="flex flex-col items-center gap-2">
-                            <Download /> Smart Downloads
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Link Download Section - Full Screen */}
-            <div id="link-section" className="min-h-screen flex items-center justify-center p-8 border-t border-neutral-800">
-                <div className="w-full max-w-4xl">
-                    <div className="text-center mb-12">
-                        <h2 className="text-4xl font-bold mb-4">Paste a Playlist Link</h2>
-                        <p className="text-neutral-400 text-lg">
-                            Paste any public Spotify playlist link and download it as a ZIP. No login needed.
-                        </p>
-                    </div>
-                    <LinkDownload
-                        apiBase={process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}
-                    />
-                </div>
-            </div>
-
-            {/* CSV Upload Section - Full Screen */}
-            <div id="csv-section" className="min-h-screen flex items-center justify-center p-8 border-t border-neutral-800">
-                <div className="w-full max-w-4xl">
-                    <div className="text-center mb-12">
-                        <h2 className="text-4xl font-bold mb-4">Upload Spotify CSV</h2>
-                        <p className="text-neutral-400 text-lg">
-                            Don&apos;t want to login? Export your playlist as CSV from Spotify and upload it here.
-                        </p>
-                    </div>
-                    <CSVUpload apiBase={process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'} />
-                </div>
+                {view === 'csv' && <CsvView />}
             </div>
         </main>
-    );
+    )
+}
+
+function HomeView() {
+    return (
+        <div className="flex flex-col items-center justify-center text-center py-12 md:py-20 space-y-8">
+            <div className="relative w-28 h-28">
+                <Image src="/offlineify-logo.png" alt="Offlineify Logo" fill className="object-contain" priority />
+            </div>
+
+            <div className="space-y-4 max-w-2xl">
+                <h1 className="text-4xl md:text-5xl font-bold tracking-tight">
+                    Offline<span className="text-accent">ify</span>
+                </h1>
+                <p className="text-content-muted text-lg text-balance">
+                    Export your Spotify playlists to your laptop as MP3s with cover art and tags.
+                    Three ways in, pick whichever suits you.
+                </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-4xl pt-4">
+                <MethodCard
+                    title="Log in with Spotify"
+                    description="See all your playlists, including Liked Songs and private ones. Pick tracks individually."
+                />
+                <MethodCard
+                    title="Paste a link"
+                    description="Have a playlist URL? Paste it and download the whole thing as a ZIP. No login needed."
+                />
+                <MethodCard
+                    title="Upload a CSV"
+                    description="Exported your playlist elsewhere? Drop the CSV in and download it."
+                />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-6 pt-6 text-sm text-content-faint">
+                <span className="flex items-center gap-2"><ShieldCheck size={16} /> Runs on your machine</span>
+                <span className="flex items-center gap-2"><Music size={16} /> MP3 with album art</span>
+                <span className="flex items-center gap-2"><Download size={16} /> One-click ZIP</span>
+            </div>
+        </div>
+    )
+}
+
+function MethodCard({ title, description }: { title: string, description: string }) {
+    return (
+        <div className="bg-surface-raised border border-line/70 rounded-card p-6 text-left space-y-2 transition-colors hover:bg-surface-overlay">
+            <h3 className="font-bold text-content">{title}</h3>
+            <p className="text-content-muted text-sm">{description}</p>
+        </div>
+    )
+}
+
+function LinkView({ accessToken }: { accessToken?: string }) {
+    return (
+        <div className="max-w-2xl mx-auto">
+            <div className="text-center mb-10">
+                <h2 className="text-3xl font-bold mb-3">Paste a Playlist Link</h2>
+                <p className="text-content-muted">
+                    Paste any public Spotify playlist link and download it as a ZIP.
+                    {accessToken
+                        ? ' Logged in: full playlists, including your own private ones.'
+                        : ' Without login, Spotify shares the first 50 tracks; log in for full playlists.'}
+                </p>
+            </div>
+            <LinkDownload apiBase={API_BASE} accessToken={accessToken} />
+        </div>
+    )
+}
+
+function CsvView() {
+    return (
+        <div className="max-w-2xl mx-auto">
+            <div className="text-center mb-10">
+                <h2 className="text-3xl font-bold mb-3">Upload a Spotify CSV</h2>
+                <p className="text-content-muted">
+                    Export your playlist as CSV (for example with the dashboard&apos;s Export CSV button) and upload it here.
+                </p>
+            </div>
+            <CSVUpload apiBase={API_BASE} />
+        </div>
+    )
 }
