@@ -13,6 +13,7 @@ If matching quality needs tuning later, the knobs at the top of this file
 import io
 import os
 import re
+import time
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -65,6 +66,12 @@ YTDLP_FALLBACK_LIMIT = 5
 
 # Browser user agent for cover art downloads.
 ART_HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (Offlineify cover art fetcher)"}
+
+# YouTube sometimes answers downloads with 403/429 (ip throttling). The same
+# request usually succeeds moments later, so failed attempts are retried with
+# growing waits: 5s, 10s, 15s.
+DOWNLOAD_RETRIES = 3
+DOWNLOAD_RETRY_BASE_WAIT = 5
 
 
 # ---------------------------------------------------------------------------
@@ -385,8 +392,9 @@ def download_match(match: Match, query: TrackQuery, output_dir: str, quality: st
     """
     Download a matched video and write Spotify tags onto the MP3.
 
-    The file is named "<artist> - <title>.mp3" from the Spotify metadata, so
-    names are predictable; messy YouTube channel names never leak in.
+    YouTube intermittently answers with 403/429 responses; those are retried
+    with growing waits. The file is named "<artist> - <title>.mp3" from the
+    Spotify metadata, so names are predictable.
     Returns the final file path, or None if the download produced no file.
     """
     os.makedirs(output_dir, exist_ok=True)
@@ -397,12 +405,26 @@ def download_match(match: Match, query: TrackQuery, output_dir: str, quality: st
     safe_base = _SPACE_RE.sub(" ", safe_base).strip() or "track"
     options = ytdlp_download_options(output_dir, quality, base_name=safe_base)
 
+    info = None
+    for attempt in range(DOWNLOAD_RETRIES):
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:
+                info = ydl.extract_info(match.video_id, download=True)
+                break
+        except Exception as e:
+            transient = any(s in str(e).lower() for s in ("403", "429", "forbidden", "too many requests"))
+            if not transient or attempt == DOWNLOAD_RETRIES - 1:
+                raise
+            wait = DOWNLOAD_RETRY_BASE_WAIT * (attempt + 1)
+            print(f"YouTube blocked the download, retrying in {wait}s: {e}")
+            time.sleep(wait)
+
+    if info is None:
+        return None
+
     with yt_dlp.YoutubeDL(options) as ydl:
-        info = ydl.extract_info(match.video_id, download=True)
-        if info is None:
-            return None
         file_path = ydl.prepare_filename(info)
-        file_path = os.path.splitext(file_path)[0] + ".mp3"
+    file_path = os.path.splitext(file_path)[0] + ".mp3"
 
     if not os.path.exists(file_path):
         return None

@@ -172,6 +172,52 @@ docker run -p 8000:8000 -e SPOTIFY_CLIENT_ID=... -e SPOTIFY_CLIENT_SECRET=... of
 
 In Docker there is no browser and no folder picker; use the ZIP buttons to retrieve music.
 
+## Hosting and "where do files go?"
+
+The app has two pieces and they want different hosts:
+
+| Piece | Needs | Suggested host |
+|---|---|---|
+| Frontend (Next.js) | Static/SSR web hosting | Vercel, Netlify |
+| Backend (FastAPI + yt-dlp + ffmpeg) | Long-running process, ~100MB+ disk, background jobs | Render, Railway, Fly.io, or your own machine |
+
+**Do not deploy the backend to Vercel.** Serverless functions cannot run this backend:
+they time out long before a playlist finishes, each request may hit a different
+instance, the in-memory job state disappears between requests, and there is no
+persistent disk for the downloaded MP3s. Vercel is fine for the frontend only.
+
+### How downloads reach your laptop
+
+The backend always writes files on the machine that runs *it*. The web app gets
+them to you over HTTP:
+
+- **Save** links fetch one finished song (`/api/file`).
+- **Download as ZIP** fetches a whole playlist in one file (`/api/playlist-zip`)
+  and the browser saves it to your Downloads folder.
+
+That flow works from any browser, including when the backend runs on a server
+somewhere and you only have the frontend URL. There is no extra step to "push"
+files to your machine: the ZIP download *is* the transfer.
+
+### Deploying frontend on Vercel + backend on Render
+
+1. Deploy the backend first:
+   - New Web Service from this repo; it has a `Dockerfile`, so pick Docker.
+   - Set `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` env vars.
+   - Note the service URL, e.g. `https://offlineify-api.onrender.com`.
+2. Deploy the frontend on Vercel from the same repo:
+   - Root directory: `web/ui`.
+   - Env vars: `NEXT_PUBLIC_BACKEND_URL=https://offlineify-api.onrender.com`,
+     plus `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`.
+3. In the Spotify Developer Dashboard, add the Vercel domain as a Redirect URI.
+
+Notes:
+- Free tiers sleep after inactivity; the first request can take up to a minute.
+- Hosted disks are ephemeral: download your ZIPs before the service restarts.
+
+Local alternative that keeps everything on your laptop: `docker compose up --build`
+for the backend (keeps `downloads/` on your disk) and `npm run dev` for the frontend.
+
 ## License
 
 MIT

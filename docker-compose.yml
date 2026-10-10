@@ -1,0 +1,18 @@
+# Runs the backend (FastAPI + yt-dlp + ffmpeg) in Docker.
+#
+# The Next.js frontend is separate: either `cd web/ui && npm run dev` locally,
+# or a Vercel deployment pointed at this backend via NEXT_PUBLIC_BACKEND_URL.
+#
+# Usage: docker compose up --build
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
+    volumes:
+      # Keep downloads and the dedupe index across restarts.
+      - ./downloads:/app/downloads
+      - ./downloaded_songs.json:/app/downloaded_songs.json
