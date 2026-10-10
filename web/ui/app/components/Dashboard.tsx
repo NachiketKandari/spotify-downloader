@@ -8,6 +8,7 @@ import clsx from 'clsx'
 interface DashboardProps {
     accessToken: string
     userEmail: string
+    authError?: string
 }
 
 interface Playlist {
@@ -28,9 +29,45 @@ interface Track {
     track_number?: number
     total_tracks?: number
     explicit?: boolean
+    duration_ms?: number
 }
 
-export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
+// Shape used by the backend's CSV parser (matches Exportify's export, so
+// CSVs made here can also be uploaded back through the CSV tab).
+const CSV_COLUMNS = [
+    'Track URI', 'Track Name', 'Artist Name(s)', 'Album Name', 'Album Artist Name(s)',
+    'Album Image URL', 'Album Release Date', 'Duration (ms)', 'Track Number',
+    'Total Tracks', 'Explicit',
+]
+
+const csvCell = (value: unknown) => {
+    const text = value === null || value === undefined ? '' : String(value)
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
+const tracksToCsv = (tracks: Track[]) => [
+    CSV_COLUMNS.join(','),
+    ...tracks.map(t => [
+        t.uri, t.name, t.artist, t.album, '', t.cover_url, t.release_date,
+        t.duration_ms, t.track_number, t.total_tracks, t.explicit,
+    ].map(csvCell).join(',')),
+].join('\n')
+
+// Spotify track object -> our Track shape.
+const mapSpotifyTrack = (track: any): Track => ({
+    uri: track.uri,
+    name: track.name,
+    artist: track.artists.map((a: any) => a.name).join(';'),
+    album: track.album.name,
+    cover_url: track.album.images?.[0]?.url,
+    release_date: track.album.release_date,
+    track_number: track.track_number,
+    total_tracks: track.album.total_tracks,
+    explicit: track.explicit,
+    duration_ms: track.duration_ms,
+})
+
+export default function Dashboard({ accessToken, userEmail, authError }: DashboardProps) {
     const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
     const [playlists, setPlaylists] = useState<Playlist[]>([])
     const [loading, setLoading] = useState(true)
@@ -147,47 +184,37 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
         setSelectionModel(next)
     }
 
+    // Full track list for a playlist or for Liked Songs. Cached by the caller.
+    const fetchTracks = async (playlistId: string): Promise<Track[]> => {
+        const tracks: Track[] = []
+        const uniqueUris = new Set<string>()
+        let url = playlistId === 'liked-songs'
+            ? `https://api.spotify.com/v1/me/tracks?limit=50`
+            : `https://api.spotify.com/v1/playlists/${playlistId}/tracks?fields=items(track(name,uri,is_local,artists,track_number,explicit,duration_ms,album(name,images,release_date,total_tracks))),next&limit=100`
+
+        while (url) {
+            const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+            const data = await res.json()
+            for (const item of data.items || []) {
+                const track = item?.track
+                // Skip local files and anything without a URI (can't be matched or downloaded).
+                if (track && !track.is_local && track.uri && !uniqueUris.has(track.uri)) {
+                    uniqueUris.add(track.uri)
+                    tracks.push(mapSpotifyTrack(track))
+                }
+            }
+            url = data.next
+        }
+        return tracks
+    }
+
     // Open Playlist Modal
     const openPlaylist = async (playlist: Playlist) => {
         setViewingPlaylist(playlist)
         if (!tracksCache.has(playlist.id)) {
             setLoadingTracks(true)
             try {
-                // Fetch tracks
-                const tracks: Track[] = []
-                const uniqueUris = new Set<string>()
-                let url = ''
-
-                if (playlist.id === 'liked-songs') {
-                    // Liked Songs Endpoint
-                    // Note: 'fields' param is NOT supported on me/tracks in the same way. We must fetch full objects.
-                    url = `https://api.spotify.com/v1/me/tracks?limit=50`
-                } else {
-                    // Standard Playlist Endpoint
-                    url = `https://api.spotify.com/v1/playlists/${playlist.id}/tracks?fields=items(track(name,uri,artists,track_number,explicit,album(name,images,release_date,total_tracks))),next&limit=100`
-                }
-
-                while (url) {
-                    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
-                    const data = await res.json()
-                    for (const item of data.items) {
-                        if (item.track && !uniqueUris.has(item.track.uri)) {
-                            uniqueUris.add(item.track.uri)
-                            tracks.push({
-                                uri: item.track.uri,
-                                name: item.track.name,
-                                artist: item.track.artists.map((a: any) => a.name).join(';'),
-                                album: item.track.album.name,
-                                cover_url: item.track.album.images?.[0]?.url,
-                                release_date: item.track.album.release_date,
-                                track_number: item.track.track_number,
-                                total_tracks: item.track.album.total_tracks,
-                                explicit: item.track.explicit
-                            })
-                        }
-                    }
-                    url = data.next
-                }
+                const tracks = await fetchTracks(playlist.id)
                 setTracksCache(prev => new Map(prev).set(playlist.id, tracks))
             } catch (e) {
                 console.error(e)
@@ -195,6 +222,30 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                 setLoadingTracks(false)
             }
         }
+    }
+
+    // Save a playlist as CSV in the browser (Exportify-compatible columns).
+    const exportPlaylistCsv = async (playlist: Playlist) => {
+        let tracks = tracksCache.get(playlist.id)
+        if (!tracks) {
+            setLoadingTracks(true)
+            try {
+                const fetched = await fetchTracks(playlist.id)
+                tracks = fetched
+                setTracksCache(prev => new Map(prev).set(playlist.id, fetched))
+            } finally {
+                setLoadingTracks(false)
+            }
+        }
+        if (!tracks || tracks.length === 0) return
+
+        const blob = new Blob([tracksToCsv(tracks)], { type: 'text/csv;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `${playlist.name.replace(/[^\w \-]/g, '')}.csv`
+        link.click()
+        URL.revokeObjectURL(url)
     }
 
     const startDownload = async () => {
@@ -224,43 +275,8 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                     tracksToDownload = cached.filter(t => selection.selectedTracks.has(t.uri))
                 }
             } else {
-                // Not cached? Must be 'ALL' mode and never opened. Fetch now.
-                // Re-implement fetch logic briefly for this case (or refactor fetch logic to be reusable)
-                // reusing code is better. 
-                // Ideally we should have a `fetchTracks(id)` function.
-                // For now, inline fetch for 'ALL' case if not cached.
-
-                const fetchedTracks: Track[] = []
-                const uniqueUris = new Set<string>()
-                let url = ''
-                if (playlistId === 'liked-songs') {
-                    url = `https://api.spotify.com/v1/me/tracks?limit=50`
-                } else {
-                    url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?fields=items(track(name,uri,artists,track_number,explicit,album(name,images,release_date,total_tracks))),next&limit=100`
-                }
-
-                while (url) {
-                    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
-                    const data = await res.json()
-                    for (const item of data.items) {
-                        if (item.track && !uniqueUris.has(item.track.uri)) {
-                            uniqueUris.add(item.track.uri)
-                            fetchedTracks.push({
-                                uri: item.track.uri,
-                                name: item.track.name,
-                                artist: item.track.artists.map((a: any) => a.name).join(';'),
-                                album: item.track.album.name,
-                                cover_url: item.track.album.images?.[0]?.url,
-                                release_date: item.track.album.release_date,
-                                track_number: item.track.track_number,
-                                total_tracks: item.track.album.total_tracks,
-                                explicit: item.track.explicit
-                            })
-                        }
-                    }
-                    url = data.next
-                }
-
+                // Not cached: must be 'ALL' mode and never opened. Fetch now.
+                const fetchedTracks = await fetchTracks(playlistId)
                 if (selection.mode === 'ALL') {
                     tracksToDownload = fetchedTracks
                 }
@@ -301,6 +317,11 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
 
     return (
         <div>
+            {authError === 'RefreshAccessTokenError' && (
+                <div className="bg-red-900/30 border border-red-700 text-red-300 rounded-xl px-4 py-3 mb-6 text-sm">
+                    Your Spotify session expired. Please log out and log in again to keep downloading.
+                </div>
+            )}
             {/* Control Bar */}
             <div className="bg-neutral-800 p-6 rounded-2xl mb-8 flex justify-between items-center sticky top-4 z-10 shadow-xl border border-neutral-700">
                 <div className="flex items-center gap-6">
@@ -530,7 +551,6 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                                 <button
                                     onClick={() => {
                                         // Select ALL
-                                        const tracks = tracksCache.get(viewingPlaylist.id) || []
                                         const next = new Map(selectionModel)
                                         next.set(viewingPlaylist.id, { mode: 'ALL', selectedTracks: new Set() }) // Set empty = ALL by convention? Or just use mode
                                         setSelectionModel(next)
@@ -544,6 +564,13 @@ export default function Dashboard({ accessToken, userEmail }: DashboardProps) {
                                     className="px-4 py-2 border border-neutral-600 text-white font-bold rounded-full hover:bg-neutral-800 transition"
                                 >
                                     {selectionModel.has(viewingPlaylist.id) ? 'Deselect' : 'Select Playlist'}
+                                </button>
+                                <button
+                                    onClick={() => exportPlaylistCsv(viewingPlaylist)}
+                                    disabled={loadingTracks}
+                                    className="px-4 py-2 border border-green-600 text-green-400 font-bold rounded-full hover:bg-green-900/30 transition disabled:opacity-50"
+                                >
+                                    Export CSV
                                 </button>
                             </div>
                         </div>

@@ -3,13 +3,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict
+import io
 import os
-import shutil
 import uuid
-import yt_dlp
 import random
 import time
+import zipfile
+import pandas as pd
+from starlette.background import BackgroundTask
 from .downloader import process_track
+from .link_download import is_playlist_url, run_link_job, safe_name
 
 app = FastAPI()
 
@@ -33,6 +36,7 @@ class Track(BaseModel):
     track_number: Optional[int] = None
     total_tracks: Optional[int] = None
     explicit: Optional[bool] = False
+    duration_ms: Optional[int] = None
 
 class PlaylistBatch(BaseModel):
     name: str
@@ -51,6 +55,7 @@ class JobState(BaseModel):
     logs: List[str] = []
     completed_files: List[dict] = [] # {name: str, path: str}
     cancel_requested: bool = False
+    playlist_dir: str = ""
 
 # Global State: Map user_id (email) -> JobState
 job_states: Dict[str, JobState] = {}
@@ -59,6 +64,23 @@ def get_job_state(user_id: str) -> JobState:
     if user_id not in job_states:
         job_states[user_id] = JobState()
     return job_states[user_id]
+
+def zip_folder(folder: str, zip_path: str) -> str:
+    """Zip a folder with UTF-8 entry names (make_archive mangles accents)."""
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
+        for root, _, files in os.walk(folder):
+            for name in files:
+                full = os.path.join(root, name)
+                # zipfile wants forward slashes and utf-8 encoded names.
+                archive.write(full, os.path.relpath(full, folder))
+    return zip_path
+
+def remove_file(path: str) -> None:
+    """BackgroundTask: delete a temp file once it has been sent."""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 def run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str, output_path: str = "downloads"):
     state = get_job_state(user_id)
@@ -70,6 +92,7 @@ def run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str,
     state.completed = 0
     state.logs = []
     state.completed_files = [] # Reset
+    state.cancel_requested = False # Reset, otherwise a past cancel kills this job
     
     # Base Output Path: downloads/{user_id}
     # Determine base output path
@@ -86,19 +109,10 @@ def run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str,
     else:
         base_output_path = os.path.join("downloads", safe_user_id)
 
-    # yt-dlp options
+    # yt-dlp is driven by matcher.py; here we only choose the destination.
     ydl_opts = {
-        'format': 'bestaudio/best',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': quality,
-        }],
-        'outtmpl': f'{base_output_path}/%(artist)s - %(title)s.%(ext)s', 
-        'quiet': True,
-        'no_warnings': True,
-        'noprogress': True,
-        'cookiesfrombrowser': ('chrome',), # Use Chrome cookies to bypass bot detection
+        'output_dir': base_output_path,
+        'quality': quality,
     }
 
     if not os.path.exists(base_output_path):
@@ -117,8 +131,7 @@ def run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str,
             os.makedirs(playlist_dir)
         
         # Update output template for this playlist
-        ydl_opts['outtmpl'] = f'{playlist_dir}/%(artist)s - %(title)s.%(ext)s'
-        ydl_opts['output_dir'] = playlist_dir 
+        ydl_opts['output_dir'] = playlist_dir
 
         m3u_content = ["#EXTM3U"]
         
@@ -129,24 +142,15 @@ def run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str,
                 state.logs.append("Download cancelled by user")
                 print(f"Job cancelled by user {user_id}")
                 return
-            
-            # Rate Limiting: Sleep 3-8 seconds to protect IP reputation
-            time.sleep(random.uniform(3, 8))
-            
+
             state.current_track = f"[{playlist.name}] {track.name}"
-            
-            # Call the core logic
-            # Note: process_track might need updates if it relies on global singletons, 
-            # but currently it takes ydl_opts and manages its own index. 
-            # Ideally each user should have their own index? 
-            # For now, we share the index or let process_track handle it.
-            # Ideally pass output_dir to process_track to ensure index is relevant?
-            # existing process_track uses DOWNLOAD_INDEX_FILE which is global. 
-            # This might cause "Skipped" if User A downloaded it and User B tries.
-            # For now, acceptable optimization (global cache), but might be weird if users want separate files.
-            # Let's keep global deduplication for efficiency.
-            
+
             result = process_track(track.model_dump(), ydl_opts)
+
+            # Rate limiting: only pause between real downloads. Cached tracks
+            # (skipped) return instantly, so long playlists re-run in seconds.
+            if result['status'] != 'skipped':
+                time.sleep(random.uniform(3, 8))
             
             if result['status'] == 'success':
                 msg = f"Downloaded: {track.name}"
@@ -253,10 +257,10 @@ def download_zip(user_id: str):
         raise HTTPException(status_code=404, detail="Nothing to download")
 
     zip_filename = f"offlineify_{safe_user_id}_{uuid.uuid4().hex[:8]}"
-    zip_path = os.path.join("downloads", zip_filename) 
+    zip_path = os.path.join("downloads", f"{zip_filename}.zip")
     
-    shutil.make_archive(zip_path, 'zip', user_dir)
-    return FileResponse(f"{zip_path}.zip", filename="your_music.zip")
+    zip_folder(user_dir, zip_path)
+    return FileResponse(zip_path, filename="your_music.zip", background=BackgroundTask(remove_file, zip_path))
 
 @app.get("/api/choose-directory")
 def choose_directory():
@@ -316,30 +320,56 @@ def cancel_download(user_id: str):
     state.cancel_requested = True
     return {"message": "Cancellation requested", "status": "cancelling"}
 
+def _clean_text(value) -> str:
+    """CSV cells come back as NaN when empty; turn those into ''."""
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
+
+def _clean_int(value) -> Optional[int]:
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+def _clean_bool(value) -> bool:
+    return _clean_text(value).lower() == 'true'
+
+def parse_csv_tracks(contents: bytes) -> List[Track]:
+    """
+    Build Track objects from a Spotify playlist CSV export.
+
+    Works with this app's own export and with Exportify's, which uses
+    'Track Duration (ms)' instead of 'Duration (ms)'.
+    """
+    df = pd.read_csv(io.BytesIO(contents))
+    tracks = []
+    for _, row in df.iterrows():
+        duration = row.get('Duration (ms)')
+        if duration is None or pd.isna(duration):
+            duration = row.get('Track Duration (ms)')
+        tracks.append(Track(
+            uri=_clean_text(row.get('Track URI')),
+            name=_clean_text(row.get('Track Name')),
+            artist=_clean_text(row.get('Artist Name(s)')),
+            album=_clean_text(row.get('Album Name')),
+            cover_url=_clean_text(row.get('Album Image URL')) or None,
+            release_date=_clean_text(row.get('Album Release Date')) or None,
+            track_number=_clean_int(row.get('Track Number')),
+            total_tracks=_clean_int(row.get('Total Tracks')),
+            explicit=_clean_bool(row.get('Explicit')),
+            duration_ms=_clean_int(duration),
+        ))
+    return tracks
+
 @app.post("/api/csv-download")
 async def csv_download(file: UploadFile, background_tasks: BackgroundTasks, quality: str = "320", user_id: str = "csv_user"):
     """Upload a Spotify CSV export and download the tracks"""
     try:
-        # Read CSV file
-        import io
         contents = await file.read()
-        df = pd.read_csv(io.BytesIO(contents))
-        
-        # Parse tracks from CSV
-        tracks = []
-        for _, row in df.iterrows():
-            track = Track(
-                uri=row.get('Track URI', ''),
-                name=row.get('Track Name', ''),
-                artist=row.get('Artist Name(s)', ''),
-                album=row.get('Album Name', ''),
-                cover_url=row.get('Album Image URL', None),
-                release_date=row.get('Album Release Date', None),
-                track_number=int(row.get('Track Number', 0)) if pd.notna(row.get('Track Number')) else None,
-                total_tracks=int(row.get('Album Artist Name(s)', 0)) if pd.notna(row.get('Album Artist Name(s)')) else None,
-                explicit=bool(row.get('Explicit', 'false').lower() == 'true')
-            )
-            tracks.append(track)
+        tracks = parse_csv_tracks(contents)
         
         # Create a single playlist batch
         playlist_batch = PlaylistBatch(name="CSV Upload", tracks=tracks)
@@ -354,6 +384,39 @@ async def csv_download(file: UploadFile, background_tasks: BackgroundTasks, qual
         
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"CSV parsing error: {str(e)}")
+
+class LinkDownloadRequest(BaseModel):
+    url: str
+    quality: str = "320"
+    spotify_user_token: Optional[str] = None  # sent by the UI when logged in
+
+@app.post("/api/link-download")
+def start_link_download(request: LinkDownloadRequest, background_tasks: BackgroundTasks, user_id: str = Query(...)):
+    """Start a download from a pasted Spotify playlist link (no login required)"""
+    if not is_playlist_url(request.url):
+        raise HTTPException(status_code=400, detail="Please paste a valid Spotify playlist link")
+
+    state = get_job_state(user_id)
+    if state.status == "working":
+        return {"message": "Job already in progress", "status": "working"}
+
+    background_tasks.add_task(
+        run_link_job, state, user_id, request.url, request.quality, request.spotify_user_token
+    )
+    return {"message": "Playlist download started", "status": "starting"}
+
+@app.get("/api/playlist-zip")
+def download_playlist_zip(user_id: str, playlist: str):
+    """Zips a single playlist folder from the user's downloads"""
+    safe_user_id = "".join([c for c in user_id if c.isalnum() or c in ['@', '.', '-', '_']])
+    playlist_dir = os.path.join("downloads", safe_user_id, safe_name(playlist))
+
+    if not os.path.isdir(playlist_dir):
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    zip_path = os.path.join("downloads", f"offlineify_{safe_user_id}_{uuid.uuid4().hex[:8]}.zip")
+    zip_folder(playlist_dir, zip_path)
+    return FileResponse(zip_path, filename=f"{safe_name(playlist)}.zip", background=BackgroundTask(remove_file, zip_path))
 
 if __name__ == "__main__":
     import uvicorn

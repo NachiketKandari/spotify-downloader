@@ -1,7 +1,10 @@
 fastapi
 uvicorn[standard]
 yt-dlp
+ytmusicapi
+spotipy
 pandas
 requests
 Pillow
 mutagen
+python-multipart

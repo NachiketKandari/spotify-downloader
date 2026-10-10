@@ -1,9 +1,10 @@
 'use client'
 import { useSession, signIn, signOut } from "next-auth/react"
-import { ShieldCheck, Music, Download, Upload } from "lucide-react"
+import { ShieldCheck, Music, Download, Upload, Link2 } from "lucide-react"
 import Image from "next/image"
 import Dashboard from "./components/Dashboard"
 import CSVUpload from "./components/CSVUpload"
+import LinkDownload from "./components/LinkDownload"
 
 export default function Home() {
     const { data: session } = useSession()
@@ -38,7 +39,21 @@ export default function Home() {
                     <Dashboard
                         accessToken={session.accessToken as string}
                         userEmail={session.user?.email || 'unknown'}
+                        authError={(session as any).error}
                     />
+
+                    <div className="mt-24 border-t border-neutral-800 pt-16">
+                        <div className="text-center mb-12">
+                            <h2 className="text-3xl font-bold mb-4">Paste a Playlist Link</h2>
+                            <p className="text-neutral-400">
+                                Have a link instead? Paste any playlist (yours, or a public one) and download it as a ZIP.
+                            </p>
+                        </div>
+                        <LinkDownload
+                            apiBase={process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}
+                            accessToken={session.accessToken as string}
+                        />
+                    </div>
                 </div>
             </main>
         )
@@ -79,6 +94,25 @@ export default function Home() {
 
                         <button
                             onClick={() => {
+                                // Scroll to link download section
+                                document.getElementById('link-section')?.scrollIntoView({ behavior: 'smooth' })
+                            }}
+                            className="w-full md:w-auto bg-neutral-800 text-white px-8 py-4 rounded-full font-bold text-lg hover:bg-neutral-700 transition transform hover:scale-105 flex items-center justify-center gap-3 border border-neutral-700"
+                        >
+                            <Link2 />
+                            Paste Playlist Link
+                        </button>
+                    </div>
+
+                    <div className="text-neutral-500 flex items-center gap-4 justify-center text-sm">
+                        <span className="h-px bg-neutral-800 w-16"></span>
+                        OR UPLOAD A CSV
+                        <span className="h-px bg-neutral-800 w-16"></span>
+                    </div>
+
+                    <div className="flex justify-center">
+                        <button
+                            onClick={() => {
                                 // Scroll to CSV upload section
                                 document.getElementById('csv-section')?.scrollIntoView({ behavior: 'smooth' })
                             }}
@@ -100,6 +134,21 @@ export default function Home() {
                             <Download /> Smart Downloads
                         </div>
                     </div>
+                </div>
+            </div>
+
+            {/* Link Download Section - Full Screen */}
+            <div id="link-section" className="min-h-screen flex items-center justify-center p-8 border-t border-neutral-800">
+                <div className="w-full max-w-4xl">
+                    <div className="text-center mb-12">
+                        <h2 className="text-4xl font-bold mb-4">Paste a Playlist Link</h2>
+                        <p className="text-neutral-400 text-lg">
+                            Paste any public Spotify playlist link and download it as a ZIP. No login needed.
+                        </p>
+                    </div>
+                    <LinkDownload
+                        apiBase={process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}
+                    />
                 </div>
             </div>
 

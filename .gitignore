@@ -9,3 +9,6 @@ downloaded_songs.json
 .DS_Store
 *.mp3
 *.m3u8
+.cache
+tests/output/
+.venv/
