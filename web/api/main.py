@@ -13,6 +13,7 @@ import time
 import zipfile
 import pandas as pd
 from . import housekeeping
+from .auth import PasswordGuard
 from .downloader import process_track
 from .link_download import is_playlist_url, preview_playlist, run_link_job, safe_name
 
@@ -25,6 +26,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Optional shared-password guard (active only when OFFLINEIFY_PASSWORD is set).
+# Registered before CORS so CORS stays outermost and wraps the guard's 401s
+# with CORS headers (otherwise browsers would see an opaque network error).
+app.add_middleware(PasswordGuard)
 
 # Allow CORS for local development
 app.add_middleware(

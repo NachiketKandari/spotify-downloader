@@ -7,6 +7,7 @@ import Card from './ui/Card'
 import { Input, Field, Select } from './ui/Field'
 import StatusPanel from './ui/StatusPanel'
 import OutcomePanel from './ui/OutcomePanel'
+import { apiFetch, withAccessKey } from './apiAccess'
 
 interface PreviewTrack {
     index: number
@@ -57,7 +58,7 @@ export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps
         setPreview(null)
 
         try {
-            const res = await fetch(`${apiBase}/api/link-preview`, {
+            const res = await apiFetch(`${apiBase}/api/link-preview`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url: url.trim(), spotify_user_token: accessToken || null })
@@ -99,7 +100,7 @@ export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps
         setStatus({ status: 'starting', logs: [] })
 
         try {
-            const res = await fetch(`${apiBase}/api/link-download?user_id=${encodeURIComponent(userId)}`, {
+            const res = await apiFetch(`${apiBase}/api/link-download?user_id=${encodeURIComponent(userId)}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -137,7 +138,7 @@ export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps
         if (pollRef.current) clearInterval(pollRef.current)
         pollRef.current = setInterval(async () => {
             try {
-                const res = await fetch(`${apiBase}/api/status?user_id=${encodeURIComponent(userId)}`)
+                const res = await apiFetch(`${apiBase}/api/status?user_id=${encodeURIComponent(userId)}`)
                 const data = await res.json()
                 setStatus(data)
 
@@ -154,7 +155,7 @@ export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps
 
     const handleCancel = async () => {
         try {
-            await fetch(`${apiBase}/api/cancel?user_id=${encodeURIComponent(userId)}`, { method: 'POST' })
+            await apiFetch(`${apiBase}/api/cancel?user_id=${encodeURIComponent(userId)}`, { method: 'POST' })
         } catch (e) {
             console.error('Cancel error:', e)
         }
@@ -173,10 +174,10 @@ export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps
     }
 
     const saveUrl = (file: { name: string, path: string }) =>
-        `${apiBase}/api/file?path=${encodeURIComponent(file.path)}&user_id=${encodeURIComponent(userId)}`
+        withAccessKey(`${apiBase}/api/file?path=${encodeURIComponent(file.path)}&user_id=${encodeURIComponent(userId)}`)
 
     const zipUrl = () =>
-        `${apiBase}/api/playlist-zip?user_id=${encodeURIComponent(userId)}&playlist=${encodeURIComponent(status?.playlist_dir || '')}`
+        withAccessKey(`${apiBase}/api/playlist-zip?user_id=${encodeURIComponent(userId)}&playlist=${encodeURIComponent(status?.playlist_dir || '')}`)
 
     // ---- Render -----------------------------------------------------------
 

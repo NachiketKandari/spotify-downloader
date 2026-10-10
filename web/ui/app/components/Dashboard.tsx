@@ -4,6 +4,7 @@ import Image from 'next/image'
 import { Download, CheckCircle, Loader2, Play, Music, FolderSearch } from 'lucide-react'
 import { motion } from 'framer-motion'
 import clsx from 'clsx'
+import { apiFetch, withAccessKey } from './apiAccess'
 
 interface DashboardProps {
     accessToken: string
@@ -140,7 +141,7 @@ export default function Dashboard({ accessToken, userEmail, authError }: Dashboa
         if (downloading) {
             interval = setInterval(async () => {
                 try {
-                    const res = await fetch(`${API_BASE}/api/status?user_id=${encodeURIComponent(userEmail)}`)
+                    const res = await apiFetch(`${API_BASE}/api/status?user_id=${encodeURIComponent(userEmail)}`)
                     const data = await res.json()
                     setStatus(data)
                     if (data.status === 'done' || data.status === 'idle') {
@@ -293,7 +294,7 @@ export default function Dashboard({ accessToken, userEmail, authError }: Dashboa
 
         // 2. Send to Backend
         try {
-            await fetch(`${API_BASE}/api/download`, {
+            await apiFetch(`${API_BASE}/api/download`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -309,7 +310,7 @@ export default function Dashboard({ accessToken, userEmail, authError }: Dashboa
 
     const handleCancel = async () => {
         try {
-            await fetch(`${API_BASE}/api/cancel?user_id=${encodeURIComponent(userEmail)}`, { method: 'POST' })
+            await apiFetch(`${API_BASE}/api/cancel?user_id=${encodeURIComponent(userEmail)}`, { method: 'POST' })
         } catch (e) {
             console.error('Cancel error:', e)
         }
@@ -338,7 +339,7 @@ export default function Dashboard({ accessToken, userEmail, authError }: Dashboa
                                     onClick={async () => {
                                         setPickingFolder(true)
                                         try {
-                                            const res = await fetch(`${API_BASE}/api/choose-directory`)
+                                            const res = await apiFetch(`${API_BASE}/api/choose-directory`)
                                             const data = await res.json()
                                             if (data.path) setDownloadPath(data.path)
                                         } catch (e) {
@@ -437,7 +438,7 @@ export default function Dashboard({ accessToken, userEmail, authError }: Dashboa
                                     <div key={i} className="flex justify-between items-center bg-neutral-900 p-2 rounded border border-neutral-800">
                                         <span className="text-neutral-300 truncate text-xs mr-2">{file.name}</span>
                                         <a
-                                            href={`${API_BASE}/api/file?path=${encodeURIComponent(file.path)}&user_id=${encodeURIComponent(userEmail)}`}
+                                            href={withAccessKey(`${API_BASE}/api/file?path=${encodeURIComponent(file.path)}&user_id=${encodeURIComponent(userEmail)}`)}
                                             target="_blank"
                                             className="bg-green-600 hover:bg-green-500 text-white text-xs px-3 py-1 rounded flex items-center gap-1 transition"
                                             download
@@ -678,7 +679,7 @@ export default function Dashboard({ accessToken, userEmail, authError }: Dashboa
                         <div className="flex flex-col gap-3 w-full">
                             <button
                                 onClick={() => {
-                                    window.open(`${API_BASE}/api/zip?user_id=${encodeURIComponent(userEmail)}`, '_blank')
+                                    window.open(withAccessKey(`${API_BASE}/api/zip?user_id=${encodeURIComponent(userEmail)}`), '_blank')
                                 }}
                                 className="bg-neutral-800 text-white font-bold py-3 px-8 rounded-full hover:bg-neutral-700 transition w-full text-lg border border-neutral-700 flex items-center justify-center gap-2"
                             >

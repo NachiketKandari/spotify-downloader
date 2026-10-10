@@ -6,6 +6,9 @@ import Image from "next/image"
 import Dashboard from "./components/Dashboard"
 import CSVUpload from "./components/CSVUpload"
 import LinkDownload from "./components/LinkDownload"
+import Button from "./components/ui/Button"
+import { Input } from "./components/ui/Field"
+import { apiFetch, clearAccess, setAccessPassword } from "./components/apiAccess"
 
 type View = 'home' | 'playlists' | 'link' | 'csv'
 
@@ -15,11 +18,45 @@ export default function Home() {
     const { data: session } = useSession()
     const [view, setView] = useState<View>('home')
 
+    // Optional server password (OFFLINEIFY_PASSWORD on the backend).
+    const [locked, setLocked] = useState(false)
+    const [passwordInput, setPasswordInput] = useState('')
+    const [unlockError, setUnlockError] = useState('')
+    const [unlocking, setUnlocking] = useState(false)
+
     // Logging in swaps the "Home" tab for "My Playlists"; logging out resets.
     useEffect(() => {
         if (session) setView(current => (current === 'home' ? 'playlists' : current))
         else setView(current => (current === 'playlists' ? 'home' : current))
     }, [session])
+
+    // If the backend is password-protected, ask for it once.
+    useEffect(() => {
+        apiFetch(`${API_BASE}/api/status`)
+            .then(res => setLocked(res.status === 401))
+            .catch(() => { /* backend down is reported by the individual views */ })
+    }, [])
+
+    const unlock = async () => {
+        if (!passwordInput) return
+        setUnlocking(true)
+        setAccessPassword(passwordInput)
+        try {
+            const res = await apiFetch(`${API_BASE}/api/status`)
+            if (res.status === 401) {
+                clearAccess()
+                setUnlockError('Wrong password — try again.')
+            } else {
+                setLocked(false)
+                setUnlockError('')
+                setPasswordInput('')
+            }
+        } catch {
+            setUnlockError('Backend unreachable.')
+        } finally {
+            setUnlocking(false)
+        }
+    }
 
     const tabs: { id: View, label: string, icon: React.ReactNode }[] = [
         ...(session
@@ -99,6 +136,31 @@ export default function Home() {
                 </div>
             </nav>
 
+            {/* Optional server password prompt */}
+            {locked && (
+                <div className="bg-surface-raised border-b border-line/70">
+                    <div className="max-w-page mx-auto px-4 md:px-8 py-3 flex flex-wrap items-center gap-3">
+                        <ShieldCheck size={18} className="text-accent shrink-0" />
+                        <span className="text-sm text-content-muted">
+                            {unlockError || 'This server is password-protected. Enter its access password to continue.'}
+                        </span>
+                        <div className="flex items-center gap-2 ml-auto">
+                            <Input
+                                type="password"
+                                placeholder="Access password"
+                                value={passwordInput}
+                                onChange={(e) => setPasswordInput(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') unlock() }}
+                                className="w-56 !py-2"
+                            />
+                            <Button variant="primary" size="sm" loading={unlocking} onClick={unlock}>
+                                Unlock
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Content */}
             <div className="max-w-page mx-auto px-4 md:px-8 py-8 md:py-10">
                 {view === 'home' && <HomeView />}
@@ -131,7 +193,7 @@ function HomeView() {
                     Offline<span className="text-accent">ify</span>
                 </h1>
                 <p className="text-content-muted text-lg text-balance">
-                    Export your Spotify playlists to your laptop as MP3s with cover art and tags.
+                    Export your Spotify playlists to your laptop as M4A or MP3 files with cover art and tags.
                     Three ways in, pick whichever suits you.
                 </p>
             </div>
@@ -153,7 +215,7 @@ function HomeView() {
 
             <div className="flex flex-wrap items-center justify-center gap-6 pt-6 text-sm text-content-faint">
                 <span className="flex items-center gap-2"><ShieldCheck size={16} /> Runs on your machine</span>
-                <span className="flex items-center gap-2"><Music size={16} /> MP3 with album art</span>
+                <span className="flex items-center gap-2"><Music size={16} /> M4A or MP3 with album art</span>
                 <span className="flex items-center gap-2"><Download size={16} /> One-click ZIP</span>
             </div>
         </div>

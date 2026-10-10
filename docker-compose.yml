@@ -11,6 +11,9 @@ services:
       - "8000:8000"
     # No credentials required: the backend receives the user's Spotify token
     # per request from the UI, and falls back to Spotify's public embed page.
+    # Set OFFLINEIFY_PASSWORD in the environment to require a shared password.
+    environment:
+      - OFFLINEIFY_PASSWORD=${OFFLINEIFY_PASSWORD:-}
     volumes:
       # Keep downloads and the dedupe index across restarts.
       - ./downloads:/app/downloads

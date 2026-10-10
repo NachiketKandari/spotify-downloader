@@ -7,6 +7,7 @@ import Card from './ui/Card'
 import { Field, Select } from './ui/Field'
 import StatusPanel from './ui/StatusPanel'
 import OutcomePanel from './ui/OutcomePanel'
+import { apiFetch, withAccessKey } from './apiAccess'
 
 interface CSVUploadProps {
     apiBase: string
@@ -40,7 +41,7 @@ export default function CSVUpload({ apiBase }: CSVUploadProps) {
             formData.append('format', format)
             formData.append('user_id', userId)
 
-            const response = await fetch(`${apiBase}/api/csv-download`, {
+            const response = await apiFetch(`${apiBase}/api/csv-download`, {
                 method: 'POST',
                 body: formData
             })
@@ -75,7 +76,7 @@ export default function CSVUpload({ apiBase }: CSVUploadProps) {
         if (pollRef.current) clearInterval(pollRef.current)
         pollRef.current = setInterval(async () => {
             try {
-                const res = await fetch(`${apiBase}/api/status?user_id=${userId}`)
+                const res = await apiFetch(`${apiBase}/api/status?user_id=${userId}`)
                 const data = await res.json()
                 setStatus(data)
 
@@ -92,14 +93,14 @@ export default function CSVUpload({ apiBase }: CSVUploadProps) {
 
     const handleCancel = async () => {
         try {
-            await fetch(`${apiBase}/api/cancel?user_id=${userId}`, { method: 'POST' })
+            await apiFetch(`${apiBase}/api/cancel?user_id=${userId}`, { method: 'POST' })
         } catch (e) {
             console.error('Cancel error:', e)
         }
     }
 
     const saveUrl = (f: { name: string, path: string }) =>
-        `${apiBase}/api/file?path=${encodeURIComponent(f.path)}&user_id=${userId}`
+        withAccessKey(`${apiBase}/api/file?path=${encodeURIComponent(f.path)}&user_id=${userId}`)
 
     return (
         <div className="w-full max-w-2xl mx-auto space-y-8">
@@ -165,7 +166,7 @@ export default function CSVUpload({ apiBase }: CSVUploadProps) {
                 <StatusPanel
                     status={status}
                     onCancel={handleCancel}
-                    onZip={() => window.open(`${apiBase}/api/zip?user_id=${userId}`, '_blank')}
+                    onZip={() => window.open(withAccessKey(`${apiBase}/api/zip?user_id=${userId}`), '_blank')}
                     zipLabel="Download All as ZIP"
                     saveUrl={saveUrl}
                 />
@@ -190,7 +191,7 @@ export default function CSVUpload({ apiBase }: CSVUploadProps) {
                     body={`${status.completed_files?.length || 0} of ${status.total} tracks downloaded`}
                     actionLabel="Upload Another CSV"
                     onAction={() => { setFile(null); setStatus(null) }}
-                    zipUrl={status.completed_files?.length > 0 ? `${apiBase}/api/zip?user_id=${userId}` : undefined}
+                    zipUrl={status.completed_files?.length > 0 ? withAccessKey(`${apiBase}/api/zip?user_id=${userId}`) : undefined}
                 />
             )}
 
@@ -202,7 +203,7 @@ export default function CSVUpload({ apiBase }: CSVUploadProps) {
                     body={`Downloaded ${status.completed_files?.length || 0} of ${status.total} tracks before stopping`}
                     actionLabel="Start New"
                     onAction={() => { setFile(null); setStatus(null) }}
-                    zipUrl={status.completed_files?.length > 0 ? `${apiBase}/api/zip?user_id=${userId}` : undefined}
+                    zipUrl={status.completed_files?.length > 0 ? withAccessKey(`${apiBase}/api/zip?user_id=${userId}`) : undefined}
                     zipLabel="Download Completed Files"
                 />
             )}

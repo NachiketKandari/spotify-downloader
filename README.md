@@ -194,19 +194,29 @@ Make sure `ffmpeg -version` works in the same environment that runs the backend.
 ## Security model
 
 - **No accounts, no stored credentials.** The `user_id` / `x-user-id` values only
-  isolate folders (`downloads/<user_id>/`); they are not authentication. Requests
-  are unauthenticated by design.
+  isolate folders (`downloads/<user_id>/`); they are not authentication.
+- **Optional shared password.** Set `OFFLINEIFY_PASSWORD` when starting the backend
+  and every request needs it:
+
+  ```bash
+  OFFLINEIFY_PASSWORD='something-long' .venv/bin/uvicorn web.api.main:app --host 0.0.0.0 --port 8000
+  ```
+
+  The web UI asks for the password once (remembered in the browser) and sends it
+  as standard HTTP Basic. Scripts can use `curl -u anything:YOURPASSWORD http://server:8000/api/status`.
+  Download links carry it as `?key=`. Leave the variable unset and the API stays
+  open — the right default for a laptop.
 - **Path handling is validated.** File endpoints reject empty ids, refuse to
   resolve outside `downloads/`, and only serve the requesting id's own folder.
   Delivered files are deleted rather than kept.
 - **Custom output paths are off** unless `ALLOW_CUSTOM_OUTPUT_PATH=1` is set
   (intended for the local folder picker on your own machine).
-- **If you expose the backend publicly, add auth at the reverse proxy** — e.g.
-  Caddy `basic_auth` or Cloudflare Access — and keep it on TLS. A key embedded in
-  the frontend is not real protection because anyone using the site can read it.
+- **If you expose the backend publicly, keep the password on** and run it behind
+  TLS (Caddy/nginx). The password is the lock; TLS stops it from being read in
+  transit.
 
 The intended setups are: everything on your laptop, or a private server you reach
-yourself. Treat an open URL as "anyone can queue downloads and spend its bandwidth".
+yourself.
 
 ## Docker
 
