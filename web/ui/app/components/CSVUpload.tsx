@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Upload, Download, X } from 'lucide-react'
 import { motion } from 'framer-motion'
 import Button from './ui/Button'
@@ -64,15 +64,24 @@ export default function CSVUpload({ apiBase }: CSVUploadProps) {
         }
     }
 
+    // One poller at a time, and it dies with the component (tab switches used
+    // to leave status polling running forever).
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+    useEffect(() => () => {
+        if (pollRef.current) clearInterval(pollRef.current)
+    }, [])
+
     const pollStatus = () => {
-        const interval = setInterval(async () => {
+        if (pollRef.current) clearInterval(pollRef.current)
+        pollRef.current = setInterval(async () => {
             try {
                 const res = await fetch(`${apiBase}/api/status?user_id=${userId}`)
                 const data = await res.json()
                 setStatus(data)
 
                 if (data.status === 'done' || data.status === 'cancelled' || data.status === 'error') {
-                    clearInterval(interval)
+                    if (pollRef.current) clearInterval(pollRef.current)
+                    pollRef.current = null
                     setDownloading(false)
                 }
             } catch (e) {

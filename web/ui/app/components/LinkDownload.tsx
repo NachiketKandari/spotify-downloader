@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link2, Download, X, Loader2, CheckCircle, ListMusic, AlertTriangle } from 'lucide-react'
 import { motion } from 'framer-motion'
 import Button from './ui/Button'
@@ -126,15 +126,24 @@ export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps
         }
     }
 
+    // One poller at a time, and it dies with the component — switching tabs
+    // used to leave status polling running forever.
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+    useEffect(() => () => {
+        if (pollRef.current) clearInterval(pollRef.current)
+    }, [])
+
     const pollStatus = () => {
-        const interval = setInterval(async () => {
+        if (pollRef.current) clearInterval(pollRef.current)
+        pollRef.current = setInterval(async () => {
             try {
                 const res = await fetch(`${apiBase}/api/status?user_id=${encodeURIComponent(userId)}`)
                 const data = await res.json()
                 setStatus(data)
 
                 if (data.status === 'done' || data.status === 'cancelled' || data.status === 'error') {
-                    clearInterval(interval)
+                    if (pollRef.current) clearInterval(pollRef.current)
+                    pollRef.current = null
                     setDownloading(false)
                 }
             } catch (e) {
@@ -152,6 +161,10 @@ export default function LinkDownload({ apiBase, accessToken }: LinkDownloadProps
     }
 
     const reset = () => {
+        if (pollRef.current) {
+            clearInterval(pollRef.current)
+            pollRef.current = null
+        }
         setPreview(null)
         setStatus(null)
         setSelected(new Set())

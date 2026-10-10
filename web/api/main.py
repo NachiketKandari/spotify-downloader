@@ -56,7 +56,7 @@ class DownloadRequest(BaseModel):
     playlists: List[PlaylistBatch]
     quality: str = "320"
     format: str = "m4a"  # "m4a" (passthrough, default) or "mp3" (re-encode)
-    output_path: str = "downloads" # Legacy param, effectively ignored/overridden by multi-user logic
+    output_path: str = "downloads" # Only honored with ALLOW_CUSTOM_OUTPUT_PATH=1 (local folder picker)
 
 class JobState(BaseModel):
     status: str = "idle"
@@ -75,6 +75,21 @@ def get_job_state(user_id: str) -> JobState:
     if user_id not in job_states:
         job_states[user_id] = JobState()
     return job_states[user_id]
+
+def validated_user_id(user_id: str) -> str:
+    """Filter a user id to safe filename characters; reject empty results.
+
+    Every file endpoint goes through this so an empty or crafted id cannot
+    address the downloads root or another user's folder.
+    """
+    cleaned = "".join(c for c in (user_id or "") if c.isalnum() or c in ['@', '.', '-', '_'])
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="A valid user_id is required")
+    return cleaned
+
+def custom_output_allowed() -> bool:
+    """Custom output_path is a local-only convenience; off by default on servers."""
+    return os.environ.get("ALLOW_CUSTOM_OUTPUT_PATH", "").lower() in ("1", "true", "yes")
 
 class _ZipSink(io.RawIOBase):
     """Unseekable byte sink; the zip generator drains it after every file."""
@@ -184,10 +199,11 @@ def _run_download_job(user_id: str, playlists: List[PlaylistBatch], quality: str
     safe_user_id = "".join([c for c in user_id if c.isalnum() or c in ['@', '.', '-', '_']])
     
     # Logic: 
-    # 1. If explicit output_path provided (and not default "downloads"), use it.
+    # 1. A custom output_path is only honored with ALLOW_CUSTOM_OUTPUT_PATH=1
+    #    (local folder picker). On a server everything stays under downloads/.
     # 2. If user_id is "unknown" (local dev default), use "downloads" root.
     # 3. Otherwise, use downloads/{user_id} for multi-user isolation.
-    if output_path and output_path != "downloads":
+    if output_path and output_path != "downloads" and custom_output_allowed():
         base_output_path = output_path
     elif safe_user_id.lower() == "unknown":
         base_output_path = "downloads"
@@ -294,31 +310,33 @@ def read_root():
 @app.get("/api/file")
 def get_file(path: str, user_id: str):
     """Serve one file; it is removed from the server once the browser got it."""
-    # Security: Ensure path doesn't escape downloads/
-    safe_path = os.path.normpath(os.path.join("downloads", path))
-    if not safe_path.startswith("downloads"):
-         raise HTTPException(status_code=403, detail="Invalid file path")
-    
-    # Path must start with user_id
-    safe_user_id = "".join([c for c in user_id if c.isalnum() or c in ['@', '.', '-', '_']])
-    # Check if the requested path actually inside the user's folder
-    # path is like "user_id/playlist/song.mp3"
-    if not path.startswith(safe_user_id):
-            raise HTTPException(status_code=403, detail="Access denied")
+    safe_user_id = validated_user_id(user_id)
 
-    if not os.path.isfile(safe_path):
+    # The path must resolve inside downloads/ AND inside this user's folder.
+    downloads_root = os.path.abspath("downloads")
+    requested = os.path.abspath(os.path.join(downloads_root, path))
+    try:
+        inside_root = os.path.commonpath([downloads_root, requested]) == downloads_root
+    except ValueError:
+        inside_root = False
+    if not inside_root:
+        raise HTTPException(status_code=403, detail="Invalid file path")
+
+    if not path.startswith(safe_user_id + os.sep):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not os.path.isfile(requested):
         raise HTTPException(status_code=404, detail="File not found")
 
     headers = attachment_headers(os.path.basename(path))
-    headers["Content-Length"] = str(os.path.getsize(safe_path))
-    media_type = mimetypes.guess_type(safe_path)[0] or "application/octet-stream"
-    return StreamingResponse(iter_file(safe_path), media_type=media_type, headers=headers)
+    headers["Content-Length"] = str(os.path.getsize(requested))
+    media_type = mimetypes.guess_type(requested)[0] or "application/octet-stream"
+    return StreamingResponse(iter_file(requested), media_type=media_type, headers=headers)
 
 @app.post("/api/download")
 async def start_download(request: DownloadRequest, background_tasks: BackgroundTasks, x_user_id: str = Header(...)):
-    if not x_user_id:
-        raise HTTPException(status_code=400, detail="User ID required")
-        
+    x_user_id = validated_user_id(x_user_id)
+
     state = get_job_state(x_user_id)
     
     if state.status == "working":
@@ -337,10 +355,7 @@ def get_status(user_id: Optional[str] = Query(None)):
 @app.get("/api/zip")
 def download_zip(user_id: str):
     """Stream the user's whole download folder as one ZIP (then clear it)."""
-    if not user_id:
-        raise HTTPException(status_code=400, detail="User ID required")
-        
-    safe_user_id = "".join([c for c in user_id if c.isalnum() or c in ['@', '.', '-', '_']])
+    safe_user_id = validated_user_id(user_id)
     user_dir = os.path.join("downloads", safe_user_id)
     
     if not os.path.isdir(user_dir) or folder_is_empty(user_dir):
@@ -453,6 +468,7 @@ def parse_csv_tracks(contents: bytes) -> List[Track]:
 @app.post("/api/csv-download")
 async def csv_download(file: UploadFile, background_tasks: BackgroundTasks, format: str = Form("m4a"), user_id: str = Form("csv_user")):
     """Upload a Spotify CSV export and download the tracks"""
+    user_id = validated_user_id(user_id)
     try:
         contents = await file.read()
         tracks = parse_csv_tracks(contents)
@@ -496,6 +512,7 @@ def link_preview(request: PlaylistPreviewRequest):
 @app.post("/api/link-download")
 def start_link_download(request: LinkDownloadRequest, background_tasks: BackgroundTasks, user_id: str = Query(...)):
     """Start a download from a pasted Spotify playlist link (no login required)"""
+    user_id = validated_user_id(user_id)
     if request.url is None and request.preview_token is None:
         raise HTTPException(status_code=400, detail="Provide a playlist link or preview token")
     if request.url is not None and not is_playlist_url(request.url):
@@ -523,7 +540,7 @@ def start_link_download(request: LinkDownloadRequest, background_tasks: Backgrou
 @app.get("/api/playlist-zip")
 def download_playlist_zip(user_id: str, playlist: str):
     """Stream one playlist folder as a ZIP (then clear it from the server)."""
-    safe_user_id = "".join([c for c in user_id if c.isalnum() or c in ['@', '.', '-', '_']])
+    safe_user_id = validated_user_id(user_id)
     playlist_dir = os.path.join("downloads", safe_user_id, safe_name(playlist))
 
     if not os.path.isdir(playlist_dir) or folder_is_empty(playlist_dir):
