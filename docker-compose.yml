@@ -9,9 +9,8 @@ services:
     build: .
     ports:
       - "8000:8000"
-    environment:
-      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
-      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
+    # No credentials required: the backend receives the user's Spotify token
+    # per request from the UI, and falls back to Spotify's public embed page.
     volumes:
       # Keep downloads and the dedupe index across restarts.
       - ./downloads:/app/downloads

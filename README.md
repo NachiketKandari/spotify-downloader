@@ -73,7 +73,7 @@ npm install
 
 ### 3. Environment Variables
 
-Create `web/ui/.env.local`:
+These configure the **frontend** only — create `web/ui/.env.local`:
 
 ```env
 NEXTAUTH_URL=http://127.0.0.1:3000
@@ -82,9 +82,10 @@ SPOTIFY_CLIENT_ID=your_spotify_client_id
 SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
 ```
 
-The backend reads `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` from the environment, and falls back to
-`web/ui/.env.local` when running locally. Without them, only the paste-link flow is disabled;
-login and CSV upload keep working.
+**The backend needs no credentials at all.** When you are logged in, the UI sends
+your Spotify access token with each request (in memory only, never stored server-side).
+Without login, the paste-link flow reads Spotify's public embed page (first 50 tracks).
+YouTube matching and downloading use ytmusicapi/yt-dlp anonymously.
 
 ### 4. Run it
 
@@ -179,8 +180,9 @@ The matcher refuses candidates that are too different in length or look like vid
 Try the track on YouTube Music manually; you can loosen `MIN_SCORE` or the duration tolerance in
 `web/api/matcher.py`.
 
-**Paste-link says credentials are missing.**
-Set `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` in `web/ui/.env.local` or the environment.
+**Paste-link says it cannot read the playlist.**
+Public playlists should work without login (first 50 tracks via the embed page).
+For full or private playlists, log in first; the UI then sends your token with the request.
 
 **Downloads are slow.**
 Matching and downloading are rate-limited on purpose to avoid IP blocks. Already-cached tracks are
@@ -193,7 +195,7 @@ Make sure `ffmpeg -version` works in the same environment that runs the backend.
 
 ```bash
 docker build -t offlineify .
-docker run -p 8000:8000 -e SPOTIFY_CLIENT_ID=... -e SPOTIFY_CLIENT_SECRET=... offlineify
+docker run -p 8000:8000 offlineify
 ```
 
 In Docker there is no browser and no folder picker; use the ZIP buttons to retrieve music.
@@ -243,7 +245,8 @@ wherever the frontend runs.
 
 1. Deploy the backend first (your Linux server, or a platform like Render with
    the provided `Dockerfile`).
-   - Set `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` env vars.
+   - No credentials needed; optionally set the housekeeping env vars
+     (`MAX_CONCURRENT_JOBS`, `DOWNLOAD_TTL_HOURS`).
    - Note the service URL, e.g. `https://offlineify-api.example.com`.
 2. Deploy the frontend on Vercel from the same repo:
    - Root directory: `web/ui`.
